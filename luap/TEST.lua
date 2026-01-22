@@ -3,9 +3,9 @@ local speaker = peripheral.find("speaker")
 local decoder = dfpwm.make_decoder()
 
 -- НАСТРОЙКИ
-local user = "ВАШ_ЛОГИН"
-local repo = "ВАШ_РЕПОЗИТОРИЙ"
-local folder = "music" -- Название папки на GitHub
+local user = "Vegstor54"
+local repo = "music-cc"
+local folder = "TRACKS"
 
 local apiUrl = "https://api.github.com/repos/"..user.."/"..repo.."/contents/"..folder
 

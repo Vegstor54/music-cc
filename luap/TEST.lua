@@ -19,10 +19,16 @@ response.close()
 -- Функция для проигрывания одного файла по URL
 local function playFile(url, name)
     print("Playing: " .. name)
-    local res = http.get(url, nil, true) -- Бинарный режим
-    if not res then return print("Error loading file") end
+    
+    -- Исправляем пробелы в ссылке для http.get
+    local encodedUrl = url:gsub(" ", "%%20")
+    
+    local res = http.get(encodedUrl, nil, true)
+    if not res then 
+        return print("Error loading: " .. name) 
+    end
 
-    local decoder = dfpwm.make_decoder() -- Сбрасываем декодер для каждого файла
+    local decoder = dfpwm.make_decoder()
     while true do
         local chunk = res.read(16384)
         if not chunk then break end

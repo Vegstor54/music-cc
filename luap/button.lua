@@ -1,53 +1,63 @@
--- Настройки монитора
-local mon = peripheral.wrap("right") -- ЗАМЕНИ "right" на сторону своего монитора
-local maxX, maxY = 39, 19 -- Твои замеры
+-- Подключаем конкретный интегратор по его сетевому имени
+local integrator = peripheral.wrap("redstoneIntegrator_3")
+local mon = peripheral.wrap("right") -- Сторона монитора (проверь: right или left)
+
+-- Твои размеры монитора
+local maxX, maxY = 50, 19
 mon.setTextScale(1)
 mon.clear()
 
--- Состояние (включено/выключено)
 local active = false
 
--- Функция рисования кнопки
-local function drawButton(status)
-    local width = 20
-    local height = 5
-    -- Центрируем кнопку
-    local x = math.floor((maxX - width) / 2)
-    local y = math.floor((maxY - height) / 2)
+-- Настройки кнопки (размер и положение по центру)
+local bW, bH = 20, 5
+local bX = math.floor((maxX - bW) / 2)
+local bY = math.floor((maxY - bH) / 2)
+
+-- Функция отрисовки интерфейса
+local function drawUI()
+    local color = active and colors.green or colors.red
+    local text = active and "ON" or "OFF"
     
-    -- Выбираем цвет в зависимости от состояния
-    local color = status and colors.green or colors.red
-    local text = status and "ON" or "OFF"
-    
+    -- Рисуем кнопку
     mon.setBackgroundColor(color)
-    for i = 0, height - 1 do
-        mon.setCursorPos(x, y + i)
-        mon.write(string.rep(" ", width))
+    for i = 0, bH - 1 do
+        mon.setCursorPos(bX, bY + i)
+        mon.write(string.rep(" ", bW))
     end
     
-    -- Текст в центр кнопки
-    mon.setCursorPos(x + (width / 2) - (#text / 2), y + (height / 2))
+    -- Текст кнопки
+    mon.setTextColor(colors.white)
+    mon.setCursorPos(bX + (bW / 2) - (#text / 2), bY + (bH / 2))
     mon.write(text)
+    
+    -- Подпись сверху (для красоты)
     mon.setBackgroundColor(colors.black)
+    mon.setCursorPos(bX, bY - 2)
+    mon.write("INTEGRATOR CONTROL")
 end
 
--- Рисуем начальное состояние
-drawButton(active)
+-- Функция управления сигналом
+local function toggleRedstone()
+    if integrator then
+        -- В Advanced Peripherals: сторона и сила (0-15)
+        local power = active and 15 or 0
+        integrator.setOutput("top", power)
+    end
+end
 
--- Бесконечный цикл ожидания клика
+-- Инициализация
+drawUI()
+toggleRedstone()
+
+-- Главный цикл
 while true do
-    local event, side, clickX, clickY = os.pullEvent("monitor_touch")
+    local event, side, x, y = os.pullEvent("monitor_touch")
     
-    -- Координаты кнопки (те же, что в функции drawButton)
-    local bX, bY = 10, 8  -- Примерные координаты центра для 39x19
-    local bW, bH = 20, 5
-    
-    -- Проверка нажатия
-    if clickX >= bX and clickX <= (bX + bW) and clickY >= bY and clickY <= (bY + bH) then
-        active = not active -- Меняем состояние
-        drawButton(active)  -- Перерисовываем кнопку
-        
-        -- Выдаем сигнал редстоуна вниз (например)
-        redstone.setOutput("bottom", active)
+    -- Проверка клика по кнопке
+    if x >= bX and x < (bX + bW) and y >= bY and y < (bY + bH) then
+        active = not active
+        toggleRedstone()
+        drawUI()
     end
 end

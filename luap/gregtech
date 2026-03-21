@@ -1,0 +1,37 @@
+local sub = peripheral.find("gtceu:power_substation")
+local webhook_url = "YOUR_GT_WEBHOOK_URL"
+
+function sendToDiscord(content)
+    local payload = textutils.serializeJSON({
+        username = "GT Substation Monitor",
+        content = content
+    })
+    local ok, err = http.post(webhook_url, payload, {["Content-Type"] = "application/json"})
+    if ok then ok.close() else print("Error: " .. (err or "unknown")) end
+end
+
+local function update()
+    if not sub then
+        print("Substation not found!")
+        return
+    end
+
+    local stored = sub.getEnergyStored()
+    local capacity = sub.getEnergyCapacity()
+    local input = sub.getInputPerSec()
+    local output = sub.getOutputPerSec()
+    local percent = (stored / capacity) * 100
+
+    local report = "--- GT SUBSTATION STATUS ---\n" ..
+                   "Charge: " .. string.format("%.1f", percent) .. "%\n" ..
+                   "Stored: " .. stored .. " / " .. capacity .. " EU\n" ..
+                   "Flow: +" .. input .. " / -" .. output .. " EU/sec"
+    
+    sendToDiscord(report)
+    print("GT report sent at " .. os.date("%H:%M"))
+end
+
+while true do
+    update()
+    os.sleep(600)
+end

@@ -1,5 +1,5 @@
 local bridge = peripheral.find("meBridge")
-local webhook_url = "YOUR_DISCORD_WEBHOOK_URL"
+local webhook_url = "https://discord.com/api/webhooks/1431193106153476158/sS_hkEp6JTKO9EHqEt0qJHgqEhmwoemROJdZ5xVGx2R03eh2fr3gZVNFOYiaWpH4SE0B"
 
 function sendToDiscord(content)
     local payload = textutils.serializeJSON({

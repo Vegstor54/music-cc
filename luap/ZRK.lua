@@ -7,41 +7,47 @@ end
 
 local TARGET_PLAYER = "Vegstor54"
 
+-- Переменные для хранения последних отправленных углов
+local lastYaw = 0
+local lastPitch = 0
+local ANGLE_THRESHOLD = 1.0 -- Меняем угол только если цель сместилась больше чем на 1 градус
+
 term.clear()
-print("SAM System (Player Detector Mode v2)")
-print("Target to track: " .. TARGET_PLAYER)
-print("------------------------------------")
+print("====================================")
+print("  SAM SYSTEM ACTIVE (Anti-Spam Mode)")
+print("  Tracking: " .. TARGET_PLAYER)
+print("====================================")
 
 while true do
-    -- Получаем список ВЕХ игроков в радиусе действия детектора
-    local players = detector.getPlayers()
-    local found = false
+    local pos = detector.getPlayerPos(TARGET_PLAYER)
     
-    for _, player in pairs(players) do
-        -- Проверяем, совпадает ли ник игрока с твоим
-        if player.name == TARGET_PLAYER then
-            found = true
-            
-            term.setCursorPos(1, 5)
-            print("--- TARGET LOCKED ---                    ")
-            print(string.format("X: %.1f | Y: %.1f | Z: %.1f      ", player.x, player.y, player.z))
-            
-            -- Считаем углы наведения (чистое смещение)
-            local yaw = math.deg(math.atan2(-player.x, player.z))
-            local groundDist = math.sqrt(player.x^2 + player.z^2)
-            local pitch = math.deg(math.atan2(player.y, groundDist))
-            
-            print(string.format("Target Yaw   : %.2f deg   ", yaw))
-            print(string.format("Target Pitch : %.2f deg   ", pitch))
-            
-            -- Отдаем команду напрямую в механизмы крепления пушки
+    if pos and pos.x then
+        -- Считаем нужные углы
+        local yaw = math.deg(math.atan2(-pos.x, pos.z))
+        local groundDist = math.sqrt(pos.x^2 + pos.z^2)
+        local pitch = math.deg(math.atan2(pos.y, groundDist))
+        
+        -- Проверяем, сильно ли изменилась позиция игрока
+        local diffYaw = math.abs(yaw - lastYaw)
+        local diffPitch = math.abs(pitch - lastPitch)
+        
+        -- Если ты отошел достаточно далеко — даем пушке команду довернуть ствол
+        if diffYaw > ANGLE_THRESHOLD or diffPitch > ANGLE_THRESHOLD then
             mount.setYaw(yaw)
             mount.setPitch(pitch)
-            break
+            
+            -- Запоминаем новые углы
+            lastYaw = yaw
+            lastPitch = pitch
         end
-    end
-    
-    if not found then
+        
+        -- Вывод инфо на монитор
+        term.setCursorPos(1, 5)
+        print("--- TARGET LOCKED ---                    ")
+        print(string.format("Player Pos -> X: %.1f | Y: %.1f | Z: %.1f  ", pos.x, pos.y, pos.z))
+        print(string.format("Aiming To  -> Yaw: %.1f | Pitch: %.1f   ", yaw, pitch))
+        print(string.format("Real Mount -> Yaw: %.1f | Pitch: %.1f   ", mount.getYaw(), mount.getPitch()))
+    else
         term.setCursorPos(1, 5)
         print("Searching for " .. TARGET_PLAYER .. "...             ")
         print("                                         ")
@@ -49,5 +55,5 @@ while true do
         print("                                         ")
     end
     
-    sleep(0.05) -- 20 раз в секунду
+    sleep(0.1) -- Даем пушке 100 миллисекунд на физический поворот перед следующим тиком
 end

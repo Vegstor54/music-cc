@@ -1,47 +1,53 @@
--- Привязываемся строго к именам из твоей консоли
 local detector = peripheral.find("player_detector")
 local mount = peripheral.find("cannon_mount")
 
-if not detector then error("Player Detector NOT found! Check right side.") end
-if not mount then error("Cannon Mount NOT found! Check left side.") end
+if not detector or not mount then 
+    error("Check connections! Need player_detector and cannon_mount.") 
+end
 
 local TARGET_PLAYER = "Vegstor54"
 
 term.clear()
-print("====================================")
-print("  SAM SYSTEM ACTIVE (Player Detector) ")
-print("  Tracking: " .. TARGET_PLAYER)
-print("====================================")
+print("SAM System (Player Detector Mode v2)")
+print("Target to track: " .. TARGET_PLAYER)
+print("------------------------------------")
 
 while true do
-    -- Получаем позицию игрока относительно детектора
-    local pos = detector.getPlayerPos(TARGET_PLAYER)
+    -- Получаем список ВЕХ игроков в радиусе действия детектора
+    local players = detector.getPlayers()
+    local found = false
     
-    if pos and pos.x then
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("--- TARGET LOCKED ---")
-        print(string.format("Delta X: %.2f", pos.x))
-        print(string.format("Delta Y: %.2f", pos.y))
-        print(string.format("Delta Z: %.2f", pos.z))
-        print("---------------------")
-        
-        -- Считаем углы поворота ствола
-        local yaw = math.deg(math.atan2(-pos.x, pos.z))
-        local groundDist = math.sqrt(pos.x^2 + pos.z^2)
-        local pitch = math.deg(math.atan2(pos.y, groundDist))
-        
-        print(string.format("Aiming Yaw   : %.2f", yaw))
-        print(string.format("Aiming Pitch : %.2f", pitch))
-        
-        -- Поворачиваем пушку за тобой
-        mount.setYaw(yaw)
-        mount.setPitch(pitch)
-    else
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("Searching for " .. TARGET_PLAYER .. "...")
+    for _, player in pairs(players) do
+        -- Проверяем, совпадает ли ник игрока с твоим
+        if player.name == TARGET_PLAYER then
+            found = true
+            
+            term.setCursorPos(1, 5)
+            print("--- TARGET LOCKED ---                    ")
+            print(string.format("X: %.1f | Y: %.1f | Z: %.1f      ", player.x, player.y, player.z))
+            
+            -- Считаем углы наведения (чистое смещение)
+            local yaw = math.deg(math.atan2(-player.x, player.z))
+            local groundDist = math.sqrt(player.x^2 + player.z^2)
+            local pitch = math.deg(math.atan2(player.y, groundDist))
+            
+            print(string.format("Target Yaw   : %.2f deg   ", yaw))
+            print(string.format("Target Pitch : %.2f deg   ", pitch))
+            
+            -- Отдаем команду напрямую в механизмы крепления пушки
+            mount.setYaw(yaw)
+            mount.setPitch(pitch)
+            break
+        end
     end
     
-    sleep(0.05) -- Пауза в один игровой тик
+    if not found then
+        term.setCursorPos(1, 5)
+        print("Searching for " .. TARGET_PLAYER .. "...             ")
+        print("                                         ")
+        print("                                         ")
+        print("                                         ")
+    end
+    
+    sleep(0.05) -- 20 раз в секунду
 end

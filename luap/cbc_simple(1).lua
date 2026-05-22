@@ -5,20 +5,26 @@
 
 local CONFIG = {
     gravity = 20.0,
+
+    -- Velocity scale: multiply calculated velocity by this factor.
+    -- If shells land SHORT  -> increase (try 1.5, 2.0...)
+    -- If shells land FAR    -> decrease (try 0.8, 0.5...)
+    -- Run [3] Calibrate in the menu to find the right value.
     velocity_scale = 1.0,
+
     base_velocity_multiplier = 10,
 
     materials = {
-        ["1"] = { name = "Cast Iron",      max_charges = 2, barrel_per_charge = 1.5 },
-        ["2"] = { name = "Bronze",         max_charges = 3, barrel_per_charge = 2.0 },
-        ["3"] = { name = "Steel",          max_charges = 6, barrel_per_charge = 2.5 },
-        ["4"] = { name = "Netherite Steel",max_charges = 8, barrel_per_charge = 3.0 },
+        ["1"] = { name = "Cast Iron",       max_charges = 2, barrel_per_charge = 1.5 },
+        ["2"] = { name = "Bronze",          max_charges = 3, barrel_per_charge = 2.0 },
+        ["3"] = { name = "Steel",           max_charges = 6, barrel_per_charge = 2.5 },
+        ["4"] = { name = "Netherite Steel", max_charges = 8, barrel_per_charge = 3.0 },
     },
 
     projectiles = {
-        ["1"] = { name = "Solid Shot",       mass = 2.0 },
-        ["2"] = { name = "HE Shell",         mass = 1.5 },
-        ["3"] = { name = "AP Shell",         mass = 3.0 },
+        ["1"] = { name = "Solid Shot", mass = 2.0 },
+        ["2"] = { name = "HE Shell",   mass = 1.5 },
+        ["3"] = { name = "AP Shell",   mass = 3.0 },
     },
 
     -- Cartridge velocity (blocks/s) -- calibrate per your modpack
@@ -40,8 +46,10 @@ local function ask(text)
     return io.read()
 end
 
-local function askNum(text)
-    return tonumber(ask(text)) or 0
+local function askNum(text, default)
+    local v = tonumber(ask(text))
+    if v then return v end
+    return default or 0
 end
 
 local function menu(title, options)
@@ -64,44 +72,38 @@ local cannon = peripheral.find("cbc_cannon_mount")
 
 local function aim(yaw, pitch)
     if not cannon then
-        c(colors.orange) print("  [!] No Cannon Controller found -- aim manually.") rc()
+        c(colors.orange) print("  [!] No Cannon Controller -- aim manually.") rc()
         return
     end
-
-    -- Check assembly
     if not cannon.isAssembled() then
         c(colors.red) print("  [!] Cannon is not assembled!") rc()
         return
     end
 
-    -- Check elevation limits
     local maxUp   = cannon.getMaxElevate()
     local maxDown = cannon.getMaxDepress()
     if pitch > maxUp then
         c(colors.red)
-        print("  [!] Pitch "..string.format("%.2f",pitch).."deg exceeds max elevate ("..maxUp.."deg)!")
+        print("  [!] Pitch "..string.format("%.2f",pitch).." exceeds max elevate ("..maxUp..")")
         rc() return
     end
     if pitch < -maxDown then
         c(colors.red)
-        print("  [!] Pitch "..string.format("%.2f",pitch).."deg exceeds max depress (-"..maxDown.."deg)!")
+        print("  [!] Pitch "..string.format("%.2f",pitch).." exceeds max depress (-"..maxDown..")")
         rc() return
     end
 
-    -- Apply aim
     local ok, err = pcall(function()
         cannon.setYaw(yaw)
         cannon.setPitch(pitch)
     end)
-
     if not ok then
-        c(colors.red) print("  [ERR] " .. tostring(err)) rc()
+        c(colors.red) print("  [ERR] "..tostring(err)) rc()
         return
     end
 
     c(colors.lime) print("  [OK] Aim applied!") rc()
 
-    -- Check loaded and offer to fire
     if cannon.isLoaded() then
         c(colors.yellow) io.write("  Cannon is loaded. Fire? [Y/N]: ") rc()
         if io.read():lower() == "y" then
@@ -121,7 +123,6 @@ local function calculate(vel, cX, cY, cZ, tX, tY, tZ)
     local dZ   = tZ - cZ
     local dY   = tY - cY
     local dist = math.sqrt(dX^2 + dZ^2)
-    -- Minecraft yaw: 0=South(+Z), -90=East(+X), 90=West(-X), 180=North(-Z)
     local yaw  = math.deg(math.atan2(-dX, dZ))
 
     local g    = CONFIG.gravity
@@ -129,8 +130,8 @@ local function calculate(vel, cX, cY, cZ, tX, tY, tZ)
 
     print("")
     c(colors.yellow) print("--- Results ---") rc()
-    print("  Distance: " .. string.format("%.1f", dist) .. " blocks")
-    print("  Velocity: " .. string.format("%.2f", vel)  .. " blocks/s")
+    print("  Distance: "..string.format("%.1f", dist).." blocks")
+    print("  Velocity: "..string.format("%.2f", vel).." blocks/s")
 
     if disc < 0 then
         c(colors.red) print("  [!] Target out of range!") rc()
@@ -142,18 +143,95 @@ local function calculate(vel, cX, cY, cZ, tX, tY, tZ)
     local pitch_high = math.deg(math.atan((vel^2 + root) / (g * dist)))
 
     c(colors.lime)
-    print("  Yaw:      " .. string.format("%.2f", yaw)        .. " deg")
-    print("  [1] Flat: " .. string.format("%.2f", pitch_low)  .. " deg  (direct)")
-    print("  [2] High: " .. string.format("%.2f", pitch_high) .. " deg  (arcing)")
+    print("  Yaw:      "..string.format("%.2f", yaw).." deg")
+    print("  [1] Flat: "..string.format("%.2f", pitch_low).." deg  (direct)")
+    print("  [2] High: "..string.format("%.2f", pitch_high).." deg  (arcing)")
     rc()
     print("")
 
     c(colors.yellow) io.write("  Trajectory [1/2/N]: ") rc()
     local t = io.read():lower()
-    if t == "1" then
-        aim(yaw, pitch_low)
-    elseif t == "2" then
-        aim(yaw, pitch_high)
+    if     t == "1" then aim(yaw, pitch_low)
+    elseif t == "2" then aim(yaw, pitch_high)
+    end
+end
+
+-- ──────────────────────────────────────────
+--  Calibration mode
+--  Fire at a FLAT target (same Y), measure
+--  real distance, then we back-solve velocity.
+-- ──────────────────────────────────────────
+local function calibrate()
+    term.clear() term.setCursorPos(1,1)
+    c(colors.yellow) print("=== Velocity Calibration ===") rc()
+    print("")
+    print("How to calibrate:")
+    print("  1. Aim cannon at 45 deg pitch manually")
+    print("  2. Fire one shot, mark where it lands")
+    print("  3. Enter the setup below")
+    print("")
+
+    local charges = askNum("Powder Charges used: ")
+    local barrels  = askNum("Barrel length used:  ")
+
+    c(colors.yellow) print("\nCannon position (auto):") rc()
+    local cX, cY, cZ
+    if cannon then
+        local ok, rx, ry, rz = pcall(function()
+            return cannon.getX(), cannon.getY(), cannon.getZ()
+        end)
+        if ok and rx then
+            cX, cY, cZ = rx, ry, rz
+            print("  X:"..cX.." Y:"..cY.." Z:"..cZ)
+        end
+    end
+    if not cX then
+        cX = askNum("Cannon X: ")
+        cY = askNum("Cannon Y: ")
+        cZ = askNum("Cannon Z: ")
+    end
+
+    c(colors.yellow) print("\nWhere did the shell land?") rc()
+    local lX = askNum("Land X: ")
+    local lY = askNum("Land Y: ")
+    local lZ = askNum("Land Z: ")
+
+    -- Real horizontal distance and height delta
+    local real_dist = math.sqrt((lX-cX)^2 + (lZ-cZ)^2)
+    local real_dY   = lY - cY
+
+    -- At 45 deg flat trajectory, solve for velocity:
+    -- x = v^2 * sin(90) / g  =>  v = sqrt(x * g)  (only if dY==0)
+    -- General: use the ballistic formula inverted numerically
+    -- We'll just show the ratio so user can adjust velocity_scale
+
+    local g = CONFIG.gravity
+    -- Estimate velocity from range formula (approximate, dY~0)
+    local v_est = math.sqrt(real_dist * g)
+
+    -- What the formula currently produces
+    local v_calc = (charges * CONFIG.base_velocity_multiplier * (1 + barrels * 0.1))
+    -- (we don't know mass here so show scale needed for solid shot as reference)
+    local v_formula_solid = v_calc / 2.0
+    local scale_needed = v_est / v_formula_solid
+
+    print("")
+    c(colors.yellow) print("--- Calibration Result ---") rc()
+    print("  Real distance:    "..string.format("%.1f", real_dist).." blocks")
+    print("  Estimated vel:    "..string.format("%.2f", v_est).." blocks/s")
+    print("  Formula vel(SS):  "..string.format("%.2f", v_formula_solid).." blocks/s")
+    c(colors.lime)
+    print("  Suggested velocity_scale: "..string.format("%.3f", scale_needed))
+    rc()
+    print("")
+    c(colors.yellow)
+    io.write("  Apply this scale? [Y/N]: ")
+    rc()
+    if io.read():lower() == "y" then
+        CONFIG.velocity_scale = scale_needed
+        c(colors.lime)
+        print("  Scale set to "..string.format("%.3f", scale_needed))
+        rc()
     end
 end
 
@@ -164,51 +242,64 @@ local function main()
     term.clear() term.setCursorPos(1,1)
     c(colors.yellow) print("=== CBC Ballistic Terminal ===") rc()
     if cannon then
-        c(colors.lime)   print("[OK] Cannon Controller connected\n")
+        c(colors.lime)   print("[OK] Cannon Controller connected")
     else
-        c(colors.orange) print("[--] Cannon Controller not found\n")
+        c(colors.orange) print("[--] Cannon Controller not found")
     end
+    c(colors.gray)
+    print("  velocity_scale = "..CONFIG.velocity_scale)
     rc()
+    print("")
 
-    -- Load mode
-    c(colors.yellow) print("Load mode:") rc()
+    -- Mode
+    c(colors.yellow) print("Mode:") rc()
     c(colors.lightGray)
     print("  [1] Powder Charges")
     print("  [2] Cartridge")
+    print("  [3] Calibrate velocity")
     rc()
     local mode = ask("Choice: ")
+
+    if mode == "3" then
+        calibrate()
+        c(colors.gray) io.write("\nEnter -- menu: ") rc()
+        io.read()
+        main()
+        return
+    end
 
     local vel
 
     if mode == "2" then
-        -- CARTRIDGE
         local cart = menu("\nCartridge:", CONFIG.cartridges)
         if not cart then print("Invalid choice.") return end
         vel = cart.velocity
 
-else
-            local material = menu("\nMaterial:", CONFIG.materials)
-            local projectile = menu("\nProjectile:", CONFIG.projectiles)
-            if not material or not projectile then print("Invalid choice.") return end
+    else
+        local material = menu("\nMaterial:", CONFIG.materials)
+        if not material then print("Invalid choice.") return end
 
-            print("")
-            local charges = askNum("Powder Charges (max "..material.max_charges.."): ")
-            local maxBarrel = charges * material.barrel_per_charge
-            local barrels = askNum("Barrel length (max "..maxBarrel.."): ")
+        local projectile = menu("\nProjectile:", CONFIG.projectiles)
+        if not projectile then print("Invalid choice.") return end
 
-            if charges > material.max_charges then
-                c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
-            end
-            if barrels > maxBarrel then
-                c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
-            end
+        print("")
+        local charges   = askNum("Powder Charges (max "..material.max_charges.."): ")
+        local maxBarrel = charges * material.barrel_per_charge
+        local barrels   = askNum("Barrel length   (max "..maxBarrel.."): ")
 
-            -- ИСПРАВЛЕННЫЙ РАСЧЕТ:
-            vel = (40.0 + (charges - 1) * 20.0) / projectile.mass
-            vel = vel * CONFIG.velocity_scale
+        if charges > material.max_charges then
+            c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
+        end
+        if barrels > maxBarrel then
+            c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
         end
 
-    -- Cannon coordinates (auto from peripheral)
+        vel = (charges * CONFIG.base_velocity_multiplier * (1 + barrels * 0.1))
+              / projectile.mass
+              * CONFIG.velocity_scale
+    end
+
+    -- Cannon coordinates
     print("")
     local cX, cY, cZ
     if cannon then
@@ -229,7 +320,9 @@ else
     end
 
     c(colors.yellow) print("-- Target --") rc()
-    local tX = askNum("X: ") local tY = askNum("Y: ") local tZ = askNum("Z: ")
+    local tX = askNum("X: ")
+    local tY = askNum("Y: ")
+    local tZ = askNum("Z: ")
 
     calculate(vel, cX, cY, cZ, tX, tY, tZ)
 

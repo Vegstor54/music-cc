@@ -1,51 +1,48 @@
--- Инициализация периферии
--- Поиск периферии по точным именам из команды 'peripherals'
+-- Настройка периферии
 local radar = peripheral.find("entity_radar") 
 local mount = peripheral.find("cannon_mount")
 
--- Проверка подключения (на английском во избежание кракозябр)
-if not radar then error("Radar NOT found! Check connection on the right.") end
-if not mount then error("Cannon Mount NOT found! Check connection on the left.") end
+if not radar then error("ERROR: entity_radar not found!") end
+if not mount then error("ERROR: cannon_mount not found!") end
 
--- Настройки выборочного лока (Selective Lock)
--- Сюда вписывай тех, кого НАДО сбивать (Blacklist)
+-- НАСТРОЙКИ ВЫБОРОЧНОГО ЛОКА (Selective Lock)
+-- Список типов целей, которые НАДО сбивать (Blacklist)
 local TARGET_TYPES = {
-    ["minecraft:player"] = true,          -- Чужие игроки (если нужно)
-    ["create_aeronautics:airship"] = true -- Летающие корабли
+    ["minecraft:player"] = true,
+    ["create_aeronautics:airship"] = true
 }
 
--- Имена друзей (Игроки, которых пушка будет игнорировать)
+-- Белый список игроков (Игнорировать их)
 local FRIENDS = {
-    ["Твой_Ник"] = true,
-    ["Ник_Друга"] = true
+    ["Твой_Ник"] = true, -- Замени на свой ник в игре (английскими буквами)
+    ["Friend_Nick"] = true
 }
 
 function getBestTarget()
-    -- Получаем список сущностей (метод может называться scan() или getEntities() в зависимости от версии CC:Optical)
+    -- Пробуем разные варианты названий функций радара для совместимости
     local success, entities = pcall(radar.getEntities)
     if not success then
         success, entities = pcall(radar.scan)
     end
     
-    if not entities then return nil end
+    if not entities or #entities == 0 then return nil end
 
     local closestTarget = nil
     local minDist = math.huge
 
     for _, entity in pairs(entities) do
-        -- Проверяем, подходит ли цель под критерии выборочного лока
+        -- Проверка на тип цели и друзей
         local isTargetType = TARGET_TYPES[entity.type] or TARGET_TYPES[entity.name]
         local isFriend = FRIENDS[entity.name]
 
         if isTargetType and not isFriend then
-            -- Рассчитываем дистанцию до цели (относительно радара)
-            -- Обычно радар возвращает относительные координаты x, y, z цели
+            -- Расчет дистанции (по теореме Пифагора в 3D)
             local dist = math.sqrt(entity.x^2 + entity.y^2 + entity.z^2)
             
             if dist < minDist then
                 minDist = dist
                 closestTarget = entity
-                closestTarget.distance = dist -- запоминаем дистанцию
+                closestTarget.distance = dist
             end
         end
     end
@@ -53,42 +50,38 @@ function getBestTarget()
     return closestTarget
 end
 
--- Расчет углов наведения (базовая тригонометрия)
 function aimAt(target)
-    -- Углы в радианах, переводим в градусы
-    -- Направление (Yaw)
+    -- Расчет углов для Cannon Mount
     local yaw = math.deg(math.atan2(-target.x, target.z))
-    
-    -- Высота (Pitch)
     local pitch = math.deg(math.atan2(target.y, math.sqrt(target.x^2 + target.z^2)))
     
-    -- Передаем команды на Cannon Mount
+    -- Наведение пушки
     mount.setYaw(yaw)
     mount.setPitch(pitch)
     
-    -- Проверяем, навелась ли пушка (допускаем погрешность в 1.5 градуса)
+    -- Если пушка навелась (погрешность 1.5 градуса) — огонь!
     if math.abs(mount.getYaw() - yaw) < 1.5 and math.abs(mount.getPitch() - pitch) < 1.5 then
-        mount.fire() -- ОГОНЬ!
+        mount.fire()
     end
 end
 
--- Главный цикл ПВО
-print("Система ПВО запущена. Сканирование воздуха...")
+-- Главный цикл программы
+term.clear()
+print("SAM System Activated. Scanning airspace...")
+
 while true do
     local target = getBestTarget()
     
     if target then
         term.clear()
         term.setCursorPos(1,1)
-        print("ЦЕЛЬ ЗАХВАЧЕНА!")
-        print("Тип: " .. tostring(target.type or target.name))
-        print("Дистанция: " .. string.format("%.1f", target.distance) .. " м.")
+        print("--- TARGET LOCKED ---")
+        print("Type: " .. tostring(target.type or target.name))
+        print("Dist: " .. string.format("%.1f", target.distance) .. " m")
+        print("X: " .. string.format("%.1f", target.x) .. " Y: " .. string.format("%.1f", target.y))
         
         aimAt(target)
-    else
-        -- Если целей нет, пушка может возвращаться в исходное положение (опционально)
-        -- mount.setPitch(0)
     end
     
-    sleep(0.05) -- Работаем каждые 1 тик (20 раз в секунду)
+    sleep(0.05) -- Обновление каждые 0.05 сек (1 тик)
 end

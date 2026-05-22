@@ -2,60 +2,110 @@ local detector = peripheral.find("player_detector")
 local mount = peripheral.find("cannon_mount")
 
 if not detector or not mount then 
-    error("Check connections! Need player_detector and cannon_mount.") 
+    error("System Error: Peripherals missing. Check connections.") 
 end
 
-local TARGET_PLAYER = "Vegstor54"
-
--- 1. Получаем координаты самой пушки (чтобы знать точку отсчета)
+-- Фиксируем базу
 local mx = mount.getX()
 local my = mount.getY()
 local mz = mount.getZ()
 
-term.clear()
-print("====================================")
-print("  SAM SYSTEM (True Delta Mode)      ")
-print(string.format("  Mount Pos: %d, %d", mx, mz))
-print("====================================")
+local TARGET_PLAYER = "Vegstor54"
+local auto_fire = false -- Оружие на предохранителе при старте
 
-while true do
-    local pos = detector.getPlayerPos(TARGET_PLAYER)
-    
-    if pos and pos.x then
-        -- ВОТ ОНО! Высчитываем НАСТОЯЩУЮ разницу в блоках между тобой и пушкой
-        local relX = pos.x - mx
-        local relY = pos.y - my
-        local relZ = pos.z - mz
+-- ФУНКЦИЯ 1: Радар, математика и управление пушкой
+function radarLoop()
+    while true do
+        local all_players = detector.getPlayers()
+        local nearby = {}
         
-        -- Считаем углы по чистой дельте (которая теперь будет в пределах пары блоков)
-        local targetYaw = math.deg(math.atan2(-relX, relZ))
-        local groundDist = math.sqrt(relX^2 + relZ^2)
-        local targetPitch = math.deg(math.atan2(relY, groundDist))
-        
-        local currentYaw = mount.getYaw()
-        local currentPitch = mount.getPitch()
-        
-        term.setCursorPos(1, 5)
-        print("--- TARGET LOCKED ---                    ")
-        -- Теперь тут будут адекватные цифры твоего смещения (например X: 5.0, Z: -3.0)
-        print(string.format("True Delta -> X: %.1f | Y: %.1f | Z: %.1f  ", relX, relY, relZ))
-        print(string.format("Target Angles-> Yaw: %.1f | Pitch: %.1f  ", targetYaw, targetPitch))
-        print(string.format("Mount Angles -> Yaw: %.1f | Pitch: %.1f  ", currentYaw, currentPitch))
-        
-        -- Если угол изменился больше чем на 1 градус
-        if math.abs(targetYaw - currentYaw) > 1 or math.abs(targetPitch - currentPitch) > 1 then
-            mount.setYaw(targetYaw)
-            mount.setPitch(targetPitch)
-            sleep(0.4) -- Ждём, пока шестерни Крейта отработают поворот
-        else
-            sleep(0.1)
+        -- Сканируем сервер и отбираем тех, кто в радиусе 150 блоков от пушки
+        for _, name in pairs(all_players) do
+            local ok, p = pcall(detector.getPlayerPos, name)
+            if ok and p and p.x then
+                local relX = p.x - mx
+                local relY = p.y - my
+                local relZ = p.z - mz
+                local dist = math.sqrt(relX^2 + relY^2 + relZ^2)
+                
+                if dist < 150 then
+                    table.insert(nearby, {name = name, dist = dist, x = relX, y = relY, z = relZ})
+                end
+            end
         end
-    else
-        term.setCursorPos(1, 5)
-        print("Searching for " .. TARGET_PLAYER .. "...             ")
-        print("                                         ")
-        print("                                         ")
-        print("                                         ")
-        sleep(0.2)
+        
+        -- Отрисовка боевого интерфейса
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("=== AIR DEFENSE TERMINAL ===")
+        
+        if auto_fire then
+            print("[ SPACE ] FIRE MODE: ARMED [!!!]")
+        else
+            print("[ SPACE ] FIRE MODE: SAFE")
+        end
+        print("--------------------------------")
+        print("RADAR (Visible in 150m):")
+        
+        local target_data = nil
+        
+        -- Вывод списка контактов
+        if #nearby == 0 then
+            print("  Clear sky. No signals.")
+        else
+            for _, p in pairs(nearby) do
+                local prefix = "  "
+                if p.name == TARGET_PLAYER then
+                    prefix = ">>" -- Подсвечиваем захваченную цель
+                    target_data = p
+                end
+                print(string.format("%s %s [%.1fm]", prefix, p.name, p.dist))
+            end
+        end
+        
+        print("--------------------------------")
+        
+        -- Логика наведения
+        if target_data then
+            local targetYaw = math.deg(math.atan2(-target_data.x, target_data.z))
+            local groundDist = math.sqrt(target_data.x^2 + target_data.z^2)
+            local targetPitch = math.deg(math.atan2(target_data.y, groundDist))
+            
+            local currentYaw = mount.getYaw()
+            local currentPitch = mount.getPitch()
+            
+            print("TRACKING : " .. target_data.name)
+            print(string.format("YAW      : %.1f", currentYaw))
+            print(string.format("PITCH    : %.1f", currentPitch))
+            
+            -- Доворот ствола (чувствительность 0.5 градуса)
+            if math.abs(targetYaw - currentYaw) > 0.5 or math.abs(targetPitch - currentPitch) > 0.5 then
+                mount.setYaw(targetYaw)
+                mount.setPitch(targetPitch)
+            end
+            
+            -- Выстрел! (Если снят предохранитель и пушка смотрит точно на цель)
+            if auto_fire and math.abs(targetYaw - currentYaw) < 2.0 and math.abs(targetPitch - currentPitch) < 2.0 then
+                mount.fire()
+            end
+        else
+            print("STANDBY. Target not found.")
+        end
+        
+        sleep(0.2) -- Плавность радара
     end
 end
+
+-- ФУНКЦИЯ 2: Перехватчик нажатий клавиатуры
+function keyboardLoop()
+    while true do
+        local event, key = os.pullEvent("key")
+        -- Если нажат Пробел — переключаем предохранитель
+        if key == keys.space then
+            auto_fire = not auto_fire
+        end
+    end
+end
+
+-- Запуск обеих систем одновременно!
+parallel.waitForAny(radarLoop, keyboardLoop)

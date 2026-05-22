@@ -136,15 +136,24 @@ local function calculate(vel, cX, cY, cZ, tX, tY, tZ)
         return
     end
 
-    local root  = math.sqrt(disc)
-    local pitch = math.deg(math.atan((vel^2 + root) / (g * dist)))
+    local root       = math.sqrt(disc)
+    local pitch_low  = math.deg(math.atan((vel^2 - root) / (g * dist)))
+    local pitch_high = math.deg(math.atan((vel^2 + root) / (g * dist)))
 
     c(colors.lime)
-    print("  Yaw:   " .. string.format("%.2f", yaw)   .. " deg")
-    print("  Pitch: " .. string.format("%.2f", pitch) .. " deg  (high arc)")
+    print("  Yaw:      " .. string.format("%.2f", yaw)        .. " deg")
+    print("  [1] Flat: " .. string.format("%.2f", pitch_low)  .. " deg  (direct)")
+    print("  [2] High: " .. string.format("%.2f", pitch_high) .. " deg  (arcing)")
     rc()
     print("")
-    aim(yaw, pitch)
+
+    c(colors.yellow) io.write("  Trajectory [1/2/N]: ") rc()
+    local t = io.read():lower()
+    if t == "1" then
+        aim(yaw, pitch_low)
+    elseif t == "2" then
+        aim(yaw, pitch_high)
+    end
 end
 
 -- ──────────────────────────────────────────
@@ -199,10 +208,25 @@ local function main()
         vel = (charges * CONFIG.base_velocity_multiplier * (1 + barrels * 0.1)) / projectile.mass
     end
 
-    -- Coordinates
+    -- Cannon coordinates (auto from peripheral)
     print("")
-    c(colors.yellow) print("-- Cannon --") rc()
-    local cX = askNum("X: ") local cY = askNum("Y: ") local cZ = askNum("Z: ")
+    local cX, cY, cZ
+    if cannon then
+        local ok, rx, ry, rz = pcall(function()
+            return cannon.getX(), cannon.getY(), cannon.getZ()
+        end)
+        if ok and rx then
+            cX, cY, cZ = rx, ry, rz
+            c(colors.lime)
+            print("-- Cannon (auto) --")
+            print("  X:"..cX.."  Y:"..cY.."  Z:"..cZ)
+            rc()
+        end
+    end
+    if not cX then
+        c(colors.yellow) print("-- Cannon --") rc()
+        cX = askNum("X: ") cY = askNum("Y: ") cZ = askNum("Z: ")
+    end
 
     c(colors.yellow) print("-- Target --") rc()
     local tX = askNum("X: ") local tY = askNum("Y: ") local tZ = askNum("Z: ")

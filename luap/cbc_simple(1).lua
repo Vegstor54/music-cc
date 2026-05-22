@@ -185,28 +185,27 @@ local function main()
         if not cart then print("Invalid choice.") return end
         vel = cart.velocity
 
-    else
-        -- POWDER CHARGES
-        local material = menu("\nMaterial:", CONFIG.materials)
-        if not material then print("Invalid choice.") return end
+else
+            local material = menu("\nMaterial:", CONFIG.materials)
+            local projectile = menu("\nProjectile:", CONFIG.projectiles)
+            if not material or not projectile then print("Invalid choice.") return end
 
-        local projectile = menu("\nProjectile:", CONFIG.projectiles)
-        if not projectile then print("Invalid choice.") return end
+            print("")
+            local charges = askNum("Powder Charges (max "..material.max_charges.."): ")
+            local maxBarrel = charges * material.barrel_per_charge
+            local barrels = askNum("Barrel length (max "..maxBarrel.."): ")
 
-        print("")
-        local charges = askNum("Powder Charges (max "..material.max_charges.."): ")
-        local maxBarrel = charges * material.barrel_per_charge
-        local barrels  = askNum("Barrel length   (max "..maxBarrel.."): ")
+            if charges > material.max_charges then
+                c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
+            end
+            if barrels > maxBarrel then
+                c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
+            end
 
-        if charges > material.max_charges then
-            c(colors.red) print("[BOOM] Charge limit exceeded -- cannon will explode!") rc() return
+            -- ИСПРАВЛЕННЫЙ РАСЧЕТ:
+            vel = (40.0 + (charges - 1) * 20.0) / projectile.mass
+            vel = vel * CONFIG.velocity_scale
         end
-        if barrels > charges * material.barrel_per_charge then
-            c(colors.red) print("[SQUIB] Shell will get stuck in the barrel!") rc() return
-        end
-
-        vel = (charges * CONFIG.base_velocity_multiplier * (1 + barrels * 0.1)) / projectile.mass
-    end
 
     -- Cannon coordinates (auto from peripheral)
     print("")

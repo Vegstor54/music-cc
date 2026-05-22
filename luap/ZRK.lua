@@ -1,111 +1,64 @@
--- Peripheral Setup
-local radar = peripheral.find("entity_radar") 
+local detector = peripheral.find("playerDetector")
 local mount = peripheral.find("cannon_mount")
 
-if not radar or not mount then error("Peripheral connection error!") end
+if not detector or not mount then 
+    error("Check connections! Need playerDetector and cannon_mount.") 
+end
 
--- SYSTEM CONFIGURATION
-local PROJECTILE_SPEED = 120 
-local FIRE_THRESHOLD = 2.0   
+local TARGET_PLAYER = "Vegstor54"
 
--- Берем координаты пушки
+-- Сразу берём координаты самой пушки (они нам пригодятся, если датчик выдаст миллионы)
 local mx = mount.getX()
 local my = mount.getY()
 local mz = mount.getZ()
 
-local lastPositions = {}
-
-function getBestTarget()
-    local data = radar.scan()
-    -- Проверяем, что дата вообще пришла и внутри есть таблица entities
-    if not data or not data.entities or #data.entities == 0 then return nil end
-
-    local closestTarget = nil
-    local minDist = math.huge
-    local currentTime = os.epoch("utc") / 1000
-
-    -- Перебираем ВСЕ сущности без фильтрации по типу
-    for _, entity in pairs(data.entities) do
-        -- Переводим из мировых в относительные
-        local relX = entity.x - mx
-        local relY = entity.y - my
-        local relZ = entity.z - mz
-
-        local dist = math.sqrt(relX^2 + relY^2 + relZ^2)
-        
-        if dist < minDist then
-            minDist = dist
-            closestTarget = {
-                id = entity.id,
-                type = entity.type,
-                x = relX, 
-                y = relY,
-                z = relZ,
-                distance = dist,
-                time = currentTime
-            }
-        end
-    end
-    
-    return closestTarget
-end
-
-function aimAndFire(target)
-    local lastData = lastPositions[target.id]
-    local vx, vy, vz = 0, 0, 0
-    
-    if lastData then
-        local dt = target.time - lastData.time
-        if dt > 0 then
-            vx = (target.x - lastData.x) / dt
-            vy = (target.y - lastData.y) / dt
-            vz = (target.z - lastData.z) / dt
-        end
-    end
-    
-    lastPositions[target.id] = {x = target.x, y = target.y, z = target.z, time = target.time}
-    
-    local travelTime = target.distance / PROJECTILE_SPEED
-    
-    local predX = target.x + (vx * travelTime)
-    local predY = target.y + (vy * travelTime)
-    local predZ = target.z + (vz * travelTime)
-    
-    -- Расчет углов наведения
-    local yaw = math.deg(math.atan2(-predX, predZ))
-    local pitch = math.deg(math.atan2(predY, math.sqrt(predX^2 + predZ^2)))
-    
-    mount.setYaw(yaw)
-    mount.setPitch(pitch)
-end
-
-function cleanTargetHistory()
-    local now = os.epoch("utc") / 1000
-    for id, data in pairs(lastPositions) do
-        if now - data.time > 2 then lastPositions[id] = nil end
-    end
-end
-
 term.clear()
-print("SAM System v4 (OMNIVOROUS MODE)")
-print("Scanning for ANY objects around...")
+print("SAM System (Player Detector AP)")
+print("Target: " .. TARGET_PLAYER)
 
 while true do
-    local target = getBestTarget()
+    local pos = detector.getPlayerPos(TARGET_PLAYER)
     
-    if target then
+    if pos and pos.x then
         term.clear()
-        term.setCursorPos(1,1)
-        print("--- TARGET LOCKED ---")
-        print("ID   : " .. string.sub(target.id, 1, 8) .. "...")
-        print("Raw Type : [" .. tostring(target.type) .. "]")
-        print("Dist : " .. string.format("%.1f", target.distance) .. " m")
-        print("Rel X: " .. string.format("%.1f", target.x) .. " Y: " .. string.format("%.1f", target.y))
+        term.setCursorPos(1, 1)
+        print("=== LOCK ON: " .. TARGET_PLAYER .. " ===")
         
-        aimAndFire(target)
+        local relX, relY, relZ
+        
+        -- Умная проверка: если координаты огромные (больше 10000 блоков),
+        -- значит детектор выдал глобальные координаты мира контрапшенов.
+        -- В таком случае мы вычитаем координаты пушки, чтобы получить дельту.
+        if math.abs(pos.x) > 10000 then
+            relX = pos.x - mx
+            relY = pos.y - my
+            relZ = pos.z - mz
+            print("Mode: Global (Calculated Delta)")
+        else
+            -- Если координаты маленькие, значит датчик уже выдал готовое смещение
+            relX = pos.x
+            relY = pos.y
+            relZ = pos.z
+            print("Mode: Relative (Direct Delta)")
+        end
+        
+        print(string.format("Delta -> X: %.1f | Y: %.1f | Z: %.1f", relX, relY, relZ))
+        
+        -- Считаем углы по чистой дельте
+        local yaw = math.deg(math.atan2(-relX, relZ))
+        local groundDist = math.sqrt(relX^2 + relZ^2)
+        local pitch = math.deg(math.atan2(relY, groundDist))
+        
+        print(string.format("Angles -> Yaw: %.1f | Pitch: %.1f", yaw, pitch))
+        
+        -- Наводим пушку
+        mount.setYaw(yaw)
+        mount.setPitch(pitch)
     else
-        cleanTargetHistory()
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("Searching for player: " .. TARGET_PLAYER)
     end
     
-    sleep(0.05)
+    sleep(0.05) -- 20 обновлений в секунду
 end

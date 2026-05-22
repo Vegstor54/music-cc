@@ -12,7 +12,7 @@ local CONFIG = {
     -- Run [3] Calibrate in the menu to find the right value.
     velocity_scale = 1.0,
 
-    base_velocity_multiplier = 10,
+    base_velocity_multiplier = 40,
 
     materials = {
         ["1"] = { name = "Cast Iron",       max_charges = 2, barrel_per_charge = 1.5 },

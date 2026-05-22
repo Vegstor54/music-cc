@@ -58,25 +58,57 @@ end
 -- ──────────────────────────────────────────
 --  Cannon controller
 -- ──────────────────────────────────────────
-local cannon = peripheral.find("cbc_cannon_controller")
-            or peripheral.find("cannon_controller")
+local cannon = peripheral.find("cbc_cannon_mount")
+            or peripheral.find("cannon_mount")
 
 local function aim(yaw, pitch)
     if not cannon then
         c(colors.orange) print("  [!] No Cannon Controller found -- aim manually.") rc()
         return
     end
+
+    -- Check assembly
+    if not cannon.isAssembled() then
+        c(colors.red) print("  [!] Cannon is not assembled!") rc()
+        return
+    end
+
+    -- Check elevation limits
+    local maxUp   = cannon.getMaxElevate()
+    local maxDown = cannon.getMaxDepress()
+    if pitch > maxUp then
+        c(colors.red)
+        print("  [!] Pitch "..string.format("%.2f",pitch).."deg exceeds max elevate ("..maxUp.."deg)!")
+        rc() return
+    end
+    if pitch < -maxDown then
+        c(colors.red)
+        print("  [!] Pitch "..string.format("%.2f",pitch).."deg exceeds max depress (-"..maxDown.."deg)!")
+        rc() return
+    end
+
+    -- Apply aim
     local ok, err = pcall(function()
         cannon.setYaw(yaw)
         cannon.setPitch(pitch)
     end)
-    if ok then
-        c(colors.lime) print("  [OK] Aim applied!") rc()
-    else
+
+    if not ok then
         c(colors.red) print("  [ERR] " .. tostring(err)) rc()
-        print("  Available methods:")
-        local methods = peripheral.getMethods(peripheral.getName(cannon))
-        if methods then for _, m in ipairs(methods) do io.write("    "..m) end print("") end
+        return
+    end
+
+    c(colors.lime) print("  [OK] Aim applied!") rc()
+
+    -- Check loaded and offer to fire
+    if cannon.isLoaded() then
+        c(colors.yellow) io.write("  Cannon is loaded. Fire? [Y/N]: ") rc()
+        if io.read():lower() == "y" then
+            cannon.fire()
+            c(colors.lime) print("  [FIRE]") rc()
+        end
+    else
+        c(colors.orange) print("  [!] Cannon is not loaded.") rc()
     end
 end
 
@@ -152,8 +184,9 @@ local function main()
         if not projectile then print("Invalid choice.") return end
 
         print("")
-        local charges = askNum("Powder Charges: ")
-        local barrels  = askNum("Barrel length:  ")
+        local charges = askNum("Powder Charges (max "..material.max_charges.."): ")
+        local maxBarrel = charges * material.barrel_per_charge
+        local barrels  = askNum("Barrel length   (max "..maxBarrel.."): ")
 
         if charges > material.max_charges then
             c(colors.red) print("[BOOM] Charge limit exceeded -- cannon will explode!") rc() return

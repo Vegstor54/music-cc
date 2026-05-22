@@ -5,6 +5,7 @@
 
 local CONFIG = {
     gravity = 20.0,
+    velocity_scale = 1.0,
     base_velocity_multiplier = 10,
 
     materials = {

@@ -1,64 +1,47 @@
-local detector = peripheral.find("playerDetector")
+-- Привязываемся строго к именам из твоей консоли
+local detector = peripheral.find("player_detector")
 local mount = peripheral.find("cannon_mount")
 
-if not detector or not mount then 
-    error("Check connections! Need playerDetector and cannon_mount.") 
-end
+if not detector then error("Player Detector NOT found! Check right side.") end
+if not mount then error("Cannon Mount NOT found! Check left side.") end
 
 local TARGET_PLAYER = "Vegstor54"
 
--- Сразу берём координаты самой пушки (они нам пригодятся, если датчик выдаст миллионы)
-local mx = mount.getX()
-local my = mount.getY()
-local mz = mount.getZ()
-
 term.clear()
-print("SAM System (Player Detector AP)")
-print("Target: " .. TARGET_PLAYER)
+print("====================================")
+print("  SAM SYSTEM ACTIVE (Player Detector) ")
+print("  Tracking: " .. TARGET_PLAYER)
+print("====================================")
 
 while true do
+    -- Получаем позицию игрока относительно детектора
     local pos = detector.getPlayerPos(TARGET_PLAYER)
     
     if pos and pos.x then
         term.clear()
         term.setCursorPos(1, 1)
-        print("=== LOCK ON: " .. TARGET_PLAYER .. " ===")
+        print("--- TARGET LOCKED ---")
+        print(string.format("Delta X: %.2f", pos.x))
+        print(string.format("Delta Y: %.2f", pos.y))
+        print(string.format("Delta Z: %.2f", pos.z))
+        print("---------------------")
         
-        local relX, relY, relZ
+        -- Считаем углы поворота ствола
+        local yaw = math.deg(math.atan2(-pos.x, pos.z))
+        local groundDist = math.sqrt(pos.x^2 + pos.z^2)
+        local pitch = math.deg(math.atan2(pos.y, groundDist))
         
-        -- Умная проверка: если координаты огромные (больше 10000 блоков),
-        -- значит детектор выдал глобальные координаты мира контрапшенов.
-        -- В таком случае мы вычитаем координаты пушки, чтобы получить дельту.
-        if math.abs(pos.x) > 10000 then
-            relX = pos.x - mx
-            relY = pos.y - my
-            relZ = pos.z - mz
-            print("Mode: Global (Calculated Delta)")
-        else
-            -- Если координаты маленькие, значит датчик уже выдал готовое смещение
-            relX = pos.x
-            relY = pos.y
-            relZ = pos.z
-            print("Mode: Relative (Direct Delta)")
-        end
+        print(string.format("Aiming Yaw   : %.2f", yaw))
+        print(string.format("Aiming Pitch : %.2f", pitch))
         
-        print(string.format("Delta -> X: %.1f | Y: %.1f | Z: %.1f", relX, relY, relZ))
-        
-        -- Считаем углы по чистой дельте
-        local yaw = math.deg(math.atan2(-relX, relZ))
-        local groundDist = math.sqrt(relX^2 + relZ^2)
-        local pitch = math.deg(math.atan2(relY, groundDist))
-        
-        print(string.format("Angles -> Yaw: %.1f | Pitch: %.1f", yaw, pitch))
-        
-        -- Наводим пушку
+        -- Поворачиваем пушку за тобой
         mount.setYaw(yaw)
         mount.setPitch(pitch)
     else
         term.clear()
         term.setCursorPos(1, 1)
-        print("Searching for player: " .. TARGET_PLAYER)
+        print("Searching for " .. TARGET_PLAYER .. "...")
     end
     
-    sleep(0.05) -- 20 обновлений в секунду
+    sleep(0.05) -- Пауза в один игровой тик
 end

@@ -1,9 +1,11 @@
 -- Инициализация периферии
-local radar = peripheral.find("ccoptical:radar_entity_sensor") 
-local mount = peripheral.find("cannon_mount") -- Интерфейс пушки из Create Big Cannons
+-- Поиск периферии по точным именам из команды 'peripherals'
+local radar = peripheral.find("entity_radar") 
+local mount = peripheral.find("cannon_mount")
 
-if not radar then error("Радар CC:Optical не найден!") end
-if not mount then error("Cannon Mount не найден!") end
+-- Проверка подключения (на английском во избежание кракозябр)
+if not radar then error("Radar NOT found! Check connection on the right.") end
+if not mount then error("Cannon Mount NOT found! Check connection on the left.") end
 
 -- Настройки выборочного лока (Selective Lock)
 -- Сюда вписывай тех, кого НАДО сбивать (Blacklist)

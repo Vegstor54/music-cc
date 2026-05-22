@@ -120,7 +120,8 @@ local function calculate(vel, cX, cY, cZ, tX, tY, tZ)
     local dZ   = tZ - cZ
     local dY   = tY - cY
     local dist = math.sqrt(dX^2 + dZ^2)
-    local yaw  = math.deg(math.atan2(dZ, dX))
+    -- Minecraft yaw: 0=South(+Z), -90=East(+X), 90=West(-X), 180=North(-Z)
+    local yaw  = math.deg(math.atan2(-dX, dZ))
 
     local g    = CONFIG.gravity
     local disc = vel^4 - g * (g * dist^2 + 2 * dY * vel^2)

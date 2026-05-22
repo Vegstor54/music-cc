@@ -2,59 +2,60 @@ local detector = peripheral.find("player_detector")
 local mount = peripheral.find("cannon_mount")
 
 if not detector or not mount then 
-    error("System Error: Check connections (player_detector & cannon_mount).") 
+    error("Check connections! Need player_detector and cannon_mount.") 
 end
 
--- Координаты базы для вычисления относительного смещения
-local mx, my, mz = mount.getX(), mount.getY(), mount.getZ()
-local TARGET_NAME = "Vegstor54"
-local auto_fire = false 
+local TARGET_PLAYER = "Vegstor54"
 
-function radarLoop()
-    while true do
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("=== SAM SYSTEM v4.0 ===")
-        print("Safety: " .. (auto_fire and "[ARMED]" or "[SAFE]"))
+-- 1. Получаем координаты самой пушки (чтобы знать точку отсчета)
+local mx = mount.getX()
+local my = mount.getY()
+local mz = mount.getZ()
+
+term.clear()
+print("====================================")
+print("  SAM SYSTEM (True Delta Mode)      ")
+print(string.format("  Mount Pos: %d, %d", mx, mz))
+print("====================================")
+
+while true do
+    local pos = detector.getPlayerPos(TARGET_PLAYER)
+    
+    if pos and pos.x then
+        -- ВОТ ОНО! Высчитываем НАСТОЯЩУЮ разницу в блоках между тобой и пушкой
+        local relX = pos.x - mx
+        local relY = pos.y - my
+        local relZ = pos.z - mz
         
-        -- Используем getPlayer, как просил сам детектор
-        local player_data = detector.getPlayer(TARGET_NAME)
+        -- Считаем углы по чистой дельте (которая теперь будет в пределах пары блоков)
+        local targetYaw = math.deg(math.atan2(-relX, relZ))
+        local groundDist = math.sqrt(relX^2 + relZ^2)
+        local targetPitch = math.deg(math.atan2(relY, groundDist))
         
-        if player_data then
-            -- Вычисляем относительные координаты (дельта)
-            local rx = player_data.x - mx
-            local ry = player_data.y - my
-            local rz = player_data.z - mz
-            local dist = math.sqrt(rx^2 + ry^2 + rz^2)
-            
-            print("Target: " .. TARGET_NAME)
-            print(string.format("Dist: %.1fm", dist))
-            
-            -- Наведение
-            local yaw = math.deg(math.atan2(-rx, rz))
-            local pitch = math.deg(math.atan2(ry, math.sqrt(rx^2 + rz^2)))
-            
-            mount.setYaw(yaw)
-            mount.setPitch(pitch)
-            
-            if auto_fire and dist < 100 then
-                mount.fire()
-            end
+        local currentYaw = mount.getYaw()
+        local currentPitch = mount.getPitch()
+        
+        term.setCursorPos(1, 5)
+        print("--- TARGET LOCKED ---                    ")
+        -- Теперь тут будут адекватные цифры твоего смещения (например X: 5.0, Z: -3.0)
+        print(string.format("True Delta -> X: %.1f | Y: %.1f | Z: %.1f  ", relX, relY, relZ))
+        print(string.format("Target Angles-> Yaw: %.1f | Pitch: %.1f  ", targetYaw, targetPitch))
+        print(string.format("Mount Angles -> Yaw: %.1f | Pitch: %.1f  ", currentYaw, currentPitch))
+        
+        -- Если угол изменился больше чем на 1 градус
+        if math.abs(targetYaw - currentYaw) > 1 or math.abs(targetPitch - currentPitch) > 1 then
+            mount.setYaw(targetYaw)
+            mount.setPitch(targetPitch)
+            sleep(0.4) -- Ждём, пока шестерни Крейта отработают поворот
         else
-            print("Searching for target...")
+            sleep(0.1)
         end
-        
-        sleep(0.3)
+    else
+        term.setCursorPos(1, 5)
+        print("Searching for " .. TARGET_PLAYER .. "...             ")
+        print("                                         ")
+        print("                                         ")
+        print("                                         ")
+        sleep(0.2)
     end
 end
-
-function keyboardLoop()
-    while true do
-        local event, key = os.pullEvent("key")
-        if key == keys.space then
-            auto_fire = not auto_fire
-        end
-    end
-end
-
-parallel.waitForAny(radarLoop, keyboardLoop)

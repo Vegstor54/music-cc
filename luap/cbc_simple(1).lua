@@ -6,7 +6,7 @@
 local CONFIG = {
     gravity        = 20.0,
     velocity_scale = 1.0,   -- tune if shells land off
-    charge_velocity = 40.0, -- blocks/s per powder charge
+    charge_velocity = 52.0, -- blocks/s per powder charge (calibrated)
 
     -- Real physical limits of your cannon mount
     -- (getMaxElevate/getMaxDepress return 90 but physical max is different)

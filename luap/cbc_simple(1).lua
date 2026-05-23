@@ -83,7 +83,9 @@ local function aimCannon(yaw, pitch)
         c(colors.orange) print("  [!] Cannon Controller not found — aim manually.") rc()
         return
     end
-    if not cannon.isAssembled() then
+    local assembled = true
+    pcall(function() assembled = cannon.isAssembled() end)
+    if not assembled then
         c(colors.red) print("  [!] Cannon is not assembled!") rc()
         return
     end
@@ -102,18 +104,32 @@ local function aimCannon(yaw, pitch)
         cannon.setPitch(pitch)
     end)
     if not ok then
-        c(colors.red) print("  [ERR] "..tostring(err)) rc()
+        c(colors.red) print("  [ERR aiming] "..tostring(err)) rc()
+        c(colors.orange) print("  Yaw: "..string.format("%.2f",yaw).."  Pitch: "..string.format("%.2f",pitch)) rc()
         return
     end
     c(colors.lime) print("  [OK] Aim applied!") rc()
-    if cannon.isLoaded and cannon.isLoaded() then
+
+    -- try to fire if loaded (isLoaded may not exist in all CBC versions)
+    local loaded = false
+    pcall(function() loaded = cannon.isLoaded() end)
+
+    if loaded then
         c(colors.yellow) io.write("  Cannon loaded. Fire? [Y/N]: ") rc()
         if io.read():lower() == "y" then
-            cannon.fire()
-            c(colors.lime) print("  [FIRE]") rc()
+            local ok2, err2 = pcall(function() cannon.fire() end)
+            if ok2 then
+                c(colors.lime) print("  [FIRE]") rc()
+            else
+                c(colors.red) print("  [ERR] "..tostring(err2)) rc()
+            end
         end
     else
-        c(colors.orange) print("  [!] Cannon is not loaded.") rc()
+        c(colors.yellow) io.write("  Fire manually, or load then fire? [F/N]: ") rc()
+        if io.read():lower() == "f" then
+            pcall(function() cannon.fire() end)
+            c(colors.lime) print("  [FIRE]") rc()
+        end
     end
 end
 

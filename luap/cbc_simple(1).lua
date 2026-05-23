@@ -365,15 +365,14 @@ local function main()
                 return
             end
 
+            -- Auto-use minimum charges, ask only for barrel length
+            charges = found_c
+            local maxBarrelAuto = charges * material.barrel_per_charge
             print("")
-            charges = askNum("Use how many charges? (suggested "..found_c.."): ", found_c)
-            barrels  = askNum("Barrel length (max "..(charges * material.barrel_per_charge).."): ")
+            c(colors.lime) print("  Using "..charges.." charge(s) automatically.") rc()
+            barrels = askNum("Barrel length (max "..maxBarrelAuto.."): ")
 
-            -- run calculate directly with auto coords and skip the coord block below
-            if charges > material.max_charges then
-                c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
-            end
-            if barrels > charges * material.barrel_per_charge then
+            if barrels > maxBarrelAuto then
                 c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
             end
             vel = (charges * CONFIG.charge_velocity / projectile.mass) * CONFIG.velocity_scale

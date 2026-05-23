@@ -20,12 +20,11 @@ local CONFIG = {
         ["4"] = { name = "Netherite Steel", max_charges = 8, barrel_per_charge = 3.0 },
     },
     projectiles = {
-        -- mass affects initial speed: speed = charges * 2 / mass
-        -- In CBC: initialSpeed = charges * 2 (blk/tick)
-        -- mass=1.0 means no penalty; adjust for your mod version
-        ["1"] = { name = "Solid Shot", mass = 1.0 },
-        ["2"] = { name = "HE Shell",   mass = 0.9 },
-        ["3"] = { name = "AP Shell",   mass = 1.2 },
+        -- In CBC mass does NOT affect ballistics, only damage.
+        -- initialSpeed = charges * 2 (blk/tick) for all projectiles.
+        ["1"] = { name = "Solid Shot" },
+        ["2"] = { name = "HE Shell"   },
+        ["3"] = { name = "AP Shell"   },
     },
     cartridges = {
         -- Speed in blocks/TICK (not per second!)
@@ -199,14 +198,28 @@ end
 --  barrelLen: barrel length in blocks
 --  cannon pos, target pos
 -- ─────────────────────────────────────────
-local function solveAngles(cX, cY, cZ, tX, tY, tZ, initialSpeed, barrelLen)
+local function solveAngles(cX, cY, cZ, tX, tY, tZ, initialSpeed, barrelLen, direction)
     local dX   = tX - cX
     local dZ   = tZ - cZ
-    local dY   = tY - cY
     local dist = math.sqrt(dX^2 + dZ^2)
 
-    -- Yaw: Minecraft uses atan2(-dX, dZ) in degrees
-    local yaw = math.deg(math.atan2(-dX, dZ))
+    -- Yaw: match reference calculator exactly
+    -- reference uses atan(Dz/Dx) * 57.29... then adjusts per cannon facing direction
+    local yaw
+    if dX ~= 0 then
+        yaw = math.deg(math.atan(dZ / dX))
+    else
+        yaw = 90
+    end
+    if dX >= 0 then yaw = yaw + 180 end
+
+    -- direction correction (which way cannon faces when NOT assembled)
+    direction = direction or "north"
+    if     direction == "north" then yaw = (yaw + 90)  % 360
+    elseif direction == "west"  then yaw = (yaw + 180) % 360
+    elseif direction == "south" then yaw = (yaw + 270) % 360
+    -- east: no change
+    end
 
     -- Inner bruteforce over pitch
     local function tryAngles(pitchLow, pitchHigh, steps, wantBoth)
@@ -340,11 +353,24 @@ local function getCoords()
 end
 
 -- ─────────────────────────────────────────
---  Speed calculation: charges * 2 / mass (blk/tick)
+--  Speed calculation: charges * 2 (blk/tick)
+--  mass does NOT affect ballistics in CBC
 -- ─────────────────────────────────────────
-local function chargesSpeed(charges, mass)
-    -- In CBC: initialSpeed = charges * 2 blk/tick, divided by mass
-    return (charges * 2) / (mass or 1.0)
+local function chargesSpeed(charges)
+    return charges * 2
+end
+
+-- ─────────────────────────────────────────
+--  Ask cannon facing direction
+-- ─────────────────────────────────────────
+local function askDirection()
+    c(colors.yellow) print("Cannon facing direction (when NOT assembled):") rc()
+    c(colors.lightGray)
+    print("  [1] North  [2] South  [3] East  [4] West")
+    rc()
+    local d = ask("Direction: ")
+    local dirs = { ["1"]="north", ["2"]="south", ["3"]="east", ["4"]="west" }
+    return dirs[d] or "north"
 end
 
 -- ─────────────────────────────────────────
@@ -353,8 +379,7 @@ end
 local function modePowder()
     local material   = menu("Material:", CONFIG.materials)
     if not material then return end
-    local projectile = menu("\nProjectile:", CONFIG.projectiles)
-    if not projectile then return end
+    menu("\nProjectile:", CONFIG.projectiles)  -- shown for info only
 
     print("")
     local charges = askNum("Powder charges (max "..material.max_charges.."): ")
@@ -368,9 +393,10 @@ local function modePowder()
         c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
     end
 
-    local speed = chargesSpeed(charges, projectile.mass)
+    local dir   = askDirection()
+    local speed = chargesSpeed(charges)
     local cX,cY,cZ,tX,tY,tZ = getCoords()
-    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, speed, barrels)
+    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, speed, barrels, dir)
     if not yaw then
         c(colors.red) print("  [!] Target unreachable!") rc() return
     end
@@ -381,11 +407,11 @@ end
 --  MODE 2: Auto-calculate charges
 -- ─────────────────────────────────────────
 local function modeAutoCharges()
-    local material   = menu("Material:", CONFIG.materials)
+    local material = menu("Material:", CONFIG.materials)
     if not material then return end
-    local projectile = menu("\nProjectile:", CONFIG.projectiles)
-    if not projectile then return end
+    menu("\nProjectile:", CONFIG.projectiles)  -- shown for info only
 
+    local dir = askDirection()
     local cX,cY,cZ,tX,tY,tZ = getCoords()
 
     print("")
@@ -393,16 +419,16 @@ local function modeAutoCharges()
 
     local found_c
     for try_c = 1, material.max_charges do
-        local try_v = chargesSpeed(try_c, projectile.mass)
+        local try_v = chargesSpeed(try_c)
         local maxB  = try_c * material.barrel_per_charge
-        local yaw_t, sol1, sol2 = solveAngles(cX,cY,cZ, tX,tY,tZ, try_v, maxB)
+        local yaw_t, sol1, sol2 = solveAngles(cX,cY,cZ, tX,tY,tZ, try_v, maxB, dir)
         if yaw_t and sol1 then
             local tag = ""
             if not found_c then found_c = try_c; tag = " <-- minimum" end
             c(colors.lime)
-            io.write("  "..try_c.."ch  v="..string.format("%.2f",try_v).."blk/tick")
-            io.write("  flat="..string.format("%5.1f",sol1.pitch).."°")
-            if sol2 then io.write("  high="..string.format("%5.1f",sol2.pitch).."°") end
+            io.write("  "..try_c.."ch  v="..string.format("%.1f",try_v).."b/t")
+            io.write("  flat="..string.format("%5.1f",sol1.pitch).."deg")
+            if sol2 then io.write("  high="..string.format("%5.1f",sol2.pitch).."deg") end
             print(tag)
             rc()
         else
@@ -421,14 +447,14 @@ local function modeAutoCharges()
         c(colors.red) print("  Invalid charge count.") rc() return
     end
 
-    local maxB  = chosen_c * material.barrel_per_charge
+    local maxB    = chosen_c * material.barrel_per_charge
     local barrels = askNum("Barrel length (max "..string.format("%.1f",maxB).."): ")
     if barrels > maxB then
         c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
     end
 
-    local speed = chargesSpeed(chosen_c, projectile.mass)
-    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, speed, barrels)
+    local speed = chargesSpeed(chosen_c)
+    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, speed, barrels, dir)
     if not yaw then
         c(colors.red) print("  [!] Target unreachable!") rc() return
     end
@@ -441,10 +467,10 @@ end
 local function modeCartridge()
     local cart = menu("Cartridge:", CONFIG.cartridges)
     if not cart then return end
-    local cX,cY,cZ,tX,tY,tZ = getCoords()
-    -- Barrel length needed for accurate muzzle offset
+    local dir     = askDirection()
     local barrels = askNum("Barrel length (blocks): ")
-    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, cart.speed, barrels)
+    local cX,cY,cZ,tX,tY,tZ = getCoords()
+    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, cart.speed, barrels, dir)
     if not yaw then
         c(colors.red) print("  [!] Target unreachable!") rc() return
     end
@@ -462,8 +488,8 @@ local function modeInfo()
     print("  Vx *= 0.99   (horizontal drag)")
     print("  Vy  = Vy * 0.99 - 0.05  (vertical + gravity)")
     print("")
-    print("  Initial speed: charges * 2 / mass  [blk/tick]")
-    print("  E.g.: 3 charges, mass=1.0 → 6.0 blk/tick = 120 blk/s")
+    print("  Initial speed: charges * 2  [blk/tick]  (mass ignored)")
+    print("  E.g.: 2 charges -> 4.0 blk/tick = 80 blk/s")
     print("")
     print("  This script bruteforces pitch from -30 to +60 deg,")
     print("  comparing horizontal and vertical flight time.")

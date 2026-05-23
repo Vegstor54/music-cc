@@ -8,6 +8,11 @@ local CONFIG = {
     velocity_scale = 1.0,   -- tune if shells land off
     charge_velocity = 40.0, -- blocks/s per powder charge
 
+    -- Real physical limits of your cannon mount
+    -- (getMaxElevate/getMaxDepress return 90 but physical max is different)
+    max_elevate = 60,  -- degrees up
+    max_depress = 30,  -- degrees down
+
     materials = {
         ["1"] = { name = "Cast Iron",       max_charges = 2, barrel_per_charge = 1.5 },
         ["2"] = { name = "Bronze",          max_charges = 3, barrel_per_charge = 2.0 },
@@ -78,16 +83,16 @@ local function aim(yaw, pitch)
         c(colors.red) print("  [!] Cannon is not assembled!") rc()
         return
     end
-    local maxUp   = cannon.getMaxElevate()
-    local maxDown = cannon.getMaxDepress()
+    local maxUp   = CONFIG.max_elevate
+    local maxDown = CONFIG.max_depress
     if pitch > maxUp then
         c(colors.red)
-        print("  [!] Pitch "..string.format("%.1f",pitch).."  exceeds max elevate ("..maxUp..")")
+        print("  [!] Pitch "..string.format("%.1f",pitch).."deg exceeds max elevate ("..maxUp.."deg)")
         rc() return
     end
     if pitch < -maxDown then
         c(colors.red)
-        print("  [!] Pitch "..string.format("%.1f",pitch).."  exceeds max depress (-"..maxDown..")")
+        print("  [!] Pitch "..string.format("%.1f",pitch).."deg exceeds max depress (-"..maxDown.."deg)")
         rc() return
     end
     local ok, err = pcall(function()
@@ -211,7 +216,7 @@ local function modeAutoCharges()
     local dist = math.sqrt((tX-cX)^2 + (tZ-cZ)^2)
     local dY   = tY - cY
     local g    = CONFIG.gravity
-    local maxUp = cannon and cannon.isAssembled() and cannon.getMaxElevate() or 90
+    local maxUp = CONFIG.max_elevate
 
     print("")
     c(colors.yellow) print("-- Charge options --") rc()

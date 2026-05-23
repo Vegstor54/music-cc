@@ -290,6 +290,106 @@ local function main()
         local maxBarrel = charges * material.barrel_per_charge
         local barrels   = askNum("Barrel length   (max "..maxBarrel.."): ")
 
+        -- Sub-mode: manual or auto charges
+        c(colors.yellow) print("\nCharge mode:") rc()
+        c(colors.lightGray)
+        print("  [1] Enter charges manually")
+        print("  [2] Auto-calculate minimum charges needed")
+        rc()
+        local cmode = ask("Choice: ")
+
+        if cmode == "2" then
+            -- Need target coords first to know required velocity
+            print("")
+            local acX, acY, acZ
+            if cannon then
+                local ok2, rx, ry, rz = pcall(function()
+                    return cannon.getX(), cannon.getY(), cannon.getZ()
+                end)
+                if ok2 and rx then
+                    acX, acY, acZ = rx, ry, rz
+                    c(colors.lime)
+                    print("-- Cannon (auto) --")
+                    print("  X:"..acX.."  Y:"..acY.."  Z:"..acZ)
+                    rc()
+                end
+            end
+            if not acX then
+                c(colors.yellow) print("-- Cannon --") rc()
+                acX = askNum("X: ") acY = askNum("Y: ") acZ = askNum("Z: ")
+            end
+            c(colors.yellow) print("-- Target --") rc()
+            local atX = askNum("X: ")
+            local atY = askNum("Y: ")
+            local atZ = askNum("Z: ")
+
+            local adist = math.sqrt((atX-acX)^2 + (atZ-acZ)^2)
+            local adY   = atY - acY
+            local g     = CONFIG.gravity
+
+            -- Find minimum charges: try 1..max_charges, pick first that reaches
+            local found_c = nil
+            local found_v = nil
+            print("")
+            c(colors.yellow) print("-- Charge options --") rc()
+            for try_c = 1, material.max_charges do
+                local try_v = (try_c * CONFIG.charge_velocity / projectile.mass)
+                              * CONFIG.velocity_scale
+                local disc = try_v^4 - g * (g * adist^2 + 2 * adY * try_v^2)
+                if disc >= 0 then
+                    local root      = math.sqrt(disc)
+                    local p_flat    = math.deg(math.atan((try_v^2 - root) / (g * adist)))
+                    local p_high    = math.deg(math.atan((try_v^2 + root) / (g * adist)))
+                    local maxUp     = cannon and cannon.isAssembled() and cannon.getMaxElevate() or 90
+                    local canFlat   = p_flat  <= maxUp
+                    local canHigh   = p_high  <= maxUp
+                    local tag = ""
+                    if not found_c then found_c = try_c; found_v = try_v; tag = " <-- minimum" end
+                    c(canFlat and colors.lime or colors.orange)
+                    print("  "..try_c.." charges:  v="..string.format("%.0f",try_v)
+                          .."  flat="..string.format("%.1f",p_flat).."deg"
+                          ..(canFlat and "" or "(too steep)")
+                          .."  high="..string.format("%.1f",p_high).."deg"
+                          ..(canHigh and "" or "(too steep)")
+                          ..tag)
+                    rc()
+                else
+                    c(colors.red)
+                    print("  "..try_c.." charges:  out of range")
+                    rc()
+                end
+            end
+
+            if not found_c then
+                c(colors.red) print("\n  [!] Target unreachable with any charge count!") rc()
+                return
+            end
+
+            print("")
+            charges = askNum("Use how many charges? (suggested "..found_c.."): ", found_c)
+            barrels  = askNum("Barrel length (max "..(charges * material.barrel_per_charge).."): ")
+
+            -- run calculate directly with auto coords and skip the coord block below
+            if charges > material.max_charges then
+                c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
+            end
+            if barrels > charges * material.barrel_per_charge then
+                c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
+            end
+            vel = (charges * CONFIG.charge_velocity / projectile.mass) * CONFIG.velocity_scale
+            calculate(vel, acX, acY, acZ, atX, atY, atZ)
+            print("")
+            c(colors.gray) io.write("Enter -- new calc  |  Q -- quit: ") rc()
+            if io.read():lower() ~= "q" then main() end
+            return
+        end
+
+        -- Manual mode
+        print("")
+        local charges = askNum("Powder Charges (max "..material.max_charges.."): ")
+        local maxBarrel = charges * material.barrel_per_charge
+        local barrels   = askNum("Barrel length   (max "..maxBarrel.."): ")
+
         if charges > material.max_charges then
             c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
         end

@@ -12,7 +12,10 @@ local CONFIG = {
     -- Run [3] Calibrate in the menu to find the right value.
     velocity_scale = 1.0,
 
-    base_velocity_multiplier = 40,
+    -- Real velocity: each powder charge adds ~40 blocks/s base.
+    -- Barrels do NOT affect muzzle velocity, only structural limits.
+    -- Fine-tune velocity_scale if shells still land off.
+    charge_velocity = 40.0,
 
     materials = {
         ["1"] = { name = "Cast Iron",       max_charges = 2, barrel_per_charge = 1.5 },
@@ -294,8 +297,7 @@ local function main()
             c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
         end
 
-        vel = (charges * CONFIG.base_velocity_multiplier * (1 + barrels * 0.1))
-              / projectile.mass
+        vel = (charges * CONFIG.charge_velocity / projectile.mass)
               * CONFIG.velocity_scale
     end
 

@@ -1,17 +1,17 @@
 -- ==========================================
 --  CBC Ballistic Terminal
 --  CC: Tweaked + CC:CBC Cannon Controller
+--  Physics: drag model (Vx *= 0.99, Vy = Vy*0.99 - 0.05 per tick)
 -- ==========================================
 
 local CONFIG = {
-    gravity        = 20.0,
-    velocity_scale = 1.0,   -- tune if shells land off
-    charge_velocity = 52.0, -- blocks/s per powder charge (calibrated)
+    -- Физические пределы твоей пушки
+    max_elevate = 60,   -- градусов вверх
+    max_depress = 30,   -- градусов вниз
 
-    -- Real physical limits of your cannon mount
-    -- (getMaxElevate/getMaxDepress return 90 but physical max is different)
-    max_elevate = 60,  -- degrees up
-    max_depress = 30,  -- degrees down
+    -- Брутфорс: точность итераций
+    brute_iterations = 6,   -- количество уточняющих проходов
+    brute_steps      = 91,  -- шагов на первый проход (-30..60 = 90 шагов + 1)
 
     materials = {
         ["1"] = { name = "Cast Iron",       max_charges = 2, barrel_per_charge = 1.5 },
@@ -20,19 +20,24 @@ local CONFIG = {
         ["4"] = { name = "Netherite Steel", max_charges = 8, barrel_per_charge = 3.0 },
     },
     projectiles = {
-        ["1"] = { name = "Solid Shot", mass = 2.0 },
-        ["2"] = { name = "HE Shell",   mass = 1.5 },
-        ["3"] = { name = "AP Shell",   mass = 3.0 },
+        -- mass влияет на начальную скорость: speed = charges * 2 / mass (условно)
+        -- На самом деле в CBC: initialSpeed = charges * 2 (блоков/тик)
+        -- mass = 1.0 означает «без штрафа», меняй под свою версию мода
+        ["1"] = { name = "Solid Shot", mass = 1.0 },
+        ["2"] = { name = "HE Shell",   mass = 0.9 },
+        ["3"] = { name = "AP Shell",   mass = 1.2 },
     },
     cartridges = {
-        ["1"] = { name = "Small Cartridge",  velocity = 30.0 },
-        ["2"] = { name = "Medium Cartridge", velocity = 55.0 },
-        ["3"] = { name = "Large Cartridge",  velocity = 80.0 },
+        -- Скорость в блоках/ТИК (не в секунду!)
+        -- 1 блок/тик = 20 блоков/с
+        ["1"] = { name = "Small Cartridge",  speed = 1.5 },  -- ~30 b/s
+        ["2"] = { name = "Medium Cartridge", speed = 2.75 }, -- ~55 b/s
+        ["3"] = { name = "Large Cartridge",  speed = 4.0 },  -- ~80 b/s
     },
 }
 
 -- ─────────────────────────────────────────
---  Helpers
+--  Утилиты
 -- ─────────────────────────────────────────
 local function c(col) if term.isColor() then term.setTextColor(col) end end
 local function rc()   if term.isColor() then term.setTextColor(colors.white) end end
@@ -60,7 +65,7 @@ local function menu(title, options)
 end
 
 -- ─────────────────────────────────────────
---  Cannon peripheral
+--  Периферийное устройство (пушка)
 -- ─────────────────────────────────────────
 local cannon = peripheral.find("cbc_cannon_mount")
             or peripheral.find("cannon_mount")
@@ -74,25 +79,23 @@ local function getCannonPos()
     return nil
 end
 
-local function aim(yaw, pitch)
+local function aimCannon(yaw, pitch)
     if not cannon then
-        c(colors.orange) print("  [!] No Cannon Controller -- aim manually.") rc()
+        c(colors.orange) print("  [!] Контроллер пушки не найден — целься вручную.") rc()
         return
     end
     if not cannon.isAssembled() then
-        c(colors.red) print("  [!] Cannon is not assembled!") rc()
+        c(colors.red) print("  [!] Пушка не собрана!") rc()
         return
     end
-    local maxUp   = CONFIG.max_elevate
-    local maxDown = CONFIG.max_depress
-    if pitch > maxUp then
+    if pitch > CONFIG.max_elevate then
         c(colors.red)
-        print("  [!] Pitch "..string.format("%.1f",pitch).."deg exceeds max elevate ("..maxUp.."deg)")
+        print("  [!] Pitch "..string.format("%.1f",pitch).."° превышает макс. подъём ("..CONFIG.max_elevate.."°)")
         rc() return
     end
-    if pitch < -maxDown then
+    if pitch < -CONFIG.max_depress then
         c(colors.red)
-        print("  [!] Pitch "..string.format("%.1f",pitch).."deg exceeds max depress (-"..maxDown.."deg)")
+        print("  [!] Pitch "..string.format("%.1f",pitch).."° превышает макс. опускание (-"..CONFIG.max_depress.."°)")
         rc() return
     end
     local ok, err = pcall(function()
@@ -103,73 +106,233 @@ local function aim(yaw, pitch)
         c(colors.red) print("  [ERR] "..tostring(err)) rc()
         return
     end
-    c(colors.lime) print("  [OK] Aim applied!") rc()
-    if cannon.isLoaded() then
-        c(colors.yellow) io.write("  Cannon loaded. Fire? [Y/N]: ") rc()
+    c(colors.lime) print("  [OK] Угол применён!") rc()
+    if cannon.isLoaded and cannon.isLoaded() then
+        c(colors.yellow) io.write("  Пушка заряжена. Огонь? [Y/N]: ") rc()
         if io.read():lower() == "y" then
             cannon.fire()
-            c(colors.lime) print("  [FIRE]") rc()
+            c(colors.lime) print("  [ВЫСТРЕЛ]") rc()
         end
     else
-        c(colors.orange) print("  [!] Cannon is not loaded.") rc()
+        c(colors.orange) print("  [!] Пушка не заряжена.") rc()
     end
 end
 
 -- ─────────────────────────────────────────
---  Ballistic solve + aim
+--  ФИЗИКА CBC (тиковая симуляция с drag)
 -- ─────────────────────────────────────────
-local function fire(vel, cX, cY, cZ, tX, tY, tZ)
+-- Горизонтальное время полёта по логарифмической формуле (из drag-модели):
+--   X(t) = 100 * Vw * (1 - 0.99^t)
+--   Решаем: dist = 100 * Vw * (1 - 0.99^t)
+--   t = log(1 - dist/(100*Vw)) / log(0.99)
+local LN099 = math.log(0.99)  -- ≈ -0.010050...
+
+local function timeToReachHoriz(dist, Vw)
+    -- Vw: горизонтальная скорость в блоках/тик
+    -- dist: горизонтальное расстояние в блоках
+    -- Возвращает время в тиках, или nil если невозможно
+    local arg = 1 - dist / (100 * Vw)
+    if arg <= 0 then return nil end
+    return math.log(arg) / LN099
+end
+
+-- Вертикальная симуляция: возвращает (t_ascending, t_descending) или (-1,-1)
+-- y0: начальная Y, targetY: целевая Y, Vy: нач. верт. скорость (блоков/тик)
+local function timeInAir(y0, targetY, Vy)
+    local t = 0
+    local t_below = -1
+
+    if y0 <= targetY then
+        -- Цель выше — сначала идём вверх до уровня цели
+        local yy, vy = y0, Vy
+        while t < 100000 do
+            yy = yy + vy
+            vy = vy * 0.99 - 0.05
+            t = t + 1
+            if yy > targetY then
+                t_below = t - 1
+                break
+            end
+        end
+        if vy < 0 then return -1, -1 end  -- не добралась до высоты
+    end
+
+    local yy = y0
+    local vy = Vy
+    -- Перемотка до t (если t_below > 0, мы уже выше — ищем пересечение на спуске)
+    if t_below >= 0 then
+        -- Нужно симулировать с t_below
+        yy = y0
+        vy = Vy
+        for _ = 1, t_below do
+            yy = yy + vy
+            vy = vy * 0.99 - 0.05
+        end
+        -- t_below — момент ПЕРЕД тем как перелетели: продолжаем вниз
+        while t < 100000 do
+            yy = yy + vy
+            vy = vy * 0.99 - 0.05
+            t = t + 1
+            if yy <= targetY then
+                return t_below, t
+            end
+        end
+        return -1, -1
+    end
+
+    -- Цель на том же уровне или ниже — сразу ищем пересечение
+    t_below = 0
+    while t < 100000 do
+        yy = yy + vy
+        vy = vy * 0.99 - 0.05
+        t = t + 1
+        if yy <= targetY then
+            return t_below, t
+        end
+    end
+    return -1, -1
+end
+
+-- ─────────────────────────────────────────
+--  Брутфорс угла
+--  initialSpeed: блоков/тик
+--  barrelLen: длина ствола в блоках
+--  cannon pos, target pos
+-- ─────────────────────────────────────────
+local function solveAngles(cX, cY, cZ, tX, tY, tZ, initialSpeed, barrelLen)
     local dX   = tX - cX
     local dZ   = tZ - cZ
     local dY   = tY - cY
     local dist = math.sqrt(dX^2 + dZ^2)
-    local yaw  = math.deg(math.atan2(-dX, dZ))
-    local g    = CONFIG.gravity
-    local disc = vel^4 - g*(g*dist^2 + 2*dY*vel^2)
 
-    print("")
-    c(colors.yellow) print("--- Results ---") rc()
-    print("  Distance: "..string.format("%.1f",dist).." blocks")
-    print("  Velocity: "..string.format("%.1f",vel).." blocks/s")
+    -- Yaw: Minecraft использует atan2(-dX, dZ) в градусах
+    local yaw = math.deg(math.atan2(-dX, dZ))
 
-    if disc < 0 then
-        c(colors.red) print("  [!] Target out of range!") rc()
-        return
+    -- Внутренний брутфорс по pitch
+    local function tryAngles(pitchLow, pitchHigh, steps, wantBoth)
+        local best1 = nil  -- минимальный deltaT (пологая траектория)
+        local best2 = nil  -- максимальный pitch с хорошим deltaT (крутая)
+        local delta = (pitchHigh - pitchLow) / (steps - 1)
+
+        for i = 0, steps - 1 do
+            local pitchDeg = pitchLow + i * delta
+            local pitchRad = math.rad(pitchDeg)
+
+            local Vw = math.cos(pitchRad) * initialSpeed
+            local Vy = math.sin(pitchRad) * initialSpeed
+
+            -- Горизонтальное расстояние от конца ствола до цели
+            local barrelHoriz = barrelLen * math.cos(pitchRad)
+            local effectiveDist = dist - barrelHoriz
+
+            if Vw > 0.001 and effectiveDist > 0 then
+                local tHoriz = timeToReachHoriz(effectiveDist, Vw)
+                if tHoriz and tHoriz > 0 then
+                    -- Y конца ствола
+                    local barrelY = cY + barrelLen * math.sin(pitchRad)
+                    local t_asc, t_desc = timeInAir(barrelY, tY, Vy)
+
+                    if t_asc >= 0 then
+                        local dt = math.min(
+                            math.abs(tHoriz - t_asc),
+                            math.abs(tHoriz - t_desc)
+                        )
+                        local airtime = (math.abs(tHoriz - t_asc) < math.abs(tHoriz - t_desc))
+                            and t_asc or t_desc
+
+                        if not best1 or dt < best1.dt then
+                            best1 = { pitch = pitchDeg, dt = dt, airtime = airtime, tHoriz = tHoriz }
+                        end
+                        if wantBoth and (not best2 or pitchDeg > best2.pitch) and dt < (best1 and best1.dt * 20 or 999) then
+                            best2 = { pitch = pitchDeg, dt = dt, airtime = airtime, tHoriz = tHoriz }
+                        end
+                    end
+                end
+            end
+        end
+        return best1, best2
     end
 
-    local root  = math.sqrt(disc)
-    local p_low  = math.deg(math.atan((vel^2 - root) / (g*dist)))
-    local p_high = math.deg(math.atan((vel^2 + root) / (g*dist)))
+    -- Первый грубый проход: -30..60 с шагом ~1°
+    local sol1, sol2 = tryAngles(-30, 60, CONFIG.brute_steps, true)
+    if not sol1 then return nil end
 
-    c(colors.lime)
-    print("  Yaw:      "..string.format("%.2f",yaw).."  deg")
-    print("  [1] Flat: "..string.format("%.2f",p_low).."  deg")
-    print("  [2] High: "..string.format("%.2f",p_high).." deg")
+    -- Уточняем оба решения
+    for i = 0, CONFIG.brute_iterations - 1 do
+        local margin = 10^(-i)
+        if sol1 then
+            local s, _ = tryAngles(sol1.pitch - margin, sol1.pitch + margin, 21, false)
+            if s then sol1 = s end
+        end
+        if sol2 and sol2.pitch ~= sol1.pitch then
+            local s, _ = tryAngles(sol2.pitch - margin, sol2.pitch + margin, 21, false)
+            if s then sol2 = s end
+        end
+    end
+
+    -- Если оба решения почти совпали — оставляем одно
+    if sol2 and math.abs(sol2.pitch - sol1.pitch) < 0.5 then sol2 = nil end
+
+    return yaw, sol1, sol2, dist
+end
+
+-- ─────────────────────────────────────────
+--  Вывод результатов и наведение
+-- ─────────────────────────────────────────
+local function showAndAim(yaw, sol1, sol2, dist, vel_tpt)
+    print("")
+    c(colors.yellow) print("--- Результаты ---") rc()
+    print("  Дистанция: "..string.format("%.1f", dist).." блоков")
+    print("  Скорость:  "..string.format("%.2f", vel_tpt).." блоков/тик  ("
+        ..string.format("%.1f", vel_tpt * 20).." блоков/с)")
+    print("  Yaw:       "..string.format("%.2f", yaw).."°")
+    print("")
+
+    if sol1 then
+        c(colors.lime)
+        print("  [1] Пологая: pitch = "..string.format("%.2f", sol1.pitch).."°"
+            .."  (полёт ~"..string.format("%.1f", sol1.airtime / 20).."с)")
+    end
+    if sol2 then
+        c(colors.cyan)
+        print("  [2] Крутая:  pitch = "..string.format("%.2f", sol2.pitch).."°"
+            .."  (полёт ~"..string.format("%.1f", sol2.airtime / 20).."с)")
+    end
     rc()
     print("")
-    c(colors.yellow) io.write("  Trajectory [1/2/N]: ") rc()
-    local t = io.read():lower()
-    if     t == "1" then aim(yaw, p_low)
-    elseif t == "2" then aim(yaw, p_high)
+
+    local choice
+    if sol2 then
+        c(colors.yellow) io.write("  Траектория [1/2/N]: ") rc()
+        choice = io.read():lower()
+    else
+        c(colors.yellow) io.write("  Применить угол? [Y/N]: ") rc()
+        choice = io.read():lower() == "y" and "1" or "n"
+    end
+
+    if choice == "1" and sol1 then
+        aimCannon(yaw, sol1.pitch)
+    elseif choice == "2" and sol2 then
+        aimCannon(yaw, sol2.pitch)
     end
 end
 
 -- ─────────────────────────────────────────
---  Shared: get coords block
+--  Ввод координат
 -- ─────────────────────────────────────────
 local function getCoords()
     print("")
     local cX, cY, cZ = getCannonPos()
     if cX then
         c(colors.lime)
-        print("-- Cannon (auto) --")
+        print("-- Пушка (авто) --")
         print("  X:"..cX.."  Y:"..cY.."  Z:"..cZ)
         rc()
     else
-        c(colors.yellow) print("-- Cannon --") rc()
+        c(colors.yellow) print("-- Пушка --") rc()
         cX = askNum("X: ") cY = askNum("Y: ") cZ = askNum("Z: ")
     end
-    c(colors.yellow) print("-- Target --") rc()
+    c(colors.yellow) print("-- Цель --") rc()
     local tX = askNum("X: ")
     local tY = askNum("Y: ")
     local tZ = askNum("Z: ")
@@ -177,191 +340,172 @@ local function getCoords()
 end
 
 -- ─────────────────────────────────────────
---  MODE 1: Powder charges (manual)
+--  Расчёт скорости: charges * 2 / mass (блоков/тик)
 -- ─────────────────────────────────────────
-local function modePowder()
-    local material   = menu("Material:", CONFIG.materials)
-    if not material then return end
-    local projectile = menu("\nProjectile:", CONFIG.projectiles)
-    if not projectile then return end
-
-    print("")
-    local charges   = askNum("Powder Charges (max "..material.max_charges.."): ")
-    local maxB      = charges * material.barrel_per_charge
-    local barrels   = askNum("Barrel length  (max "..maxB.."): ")
-
-    if charges > material.max_charges then
-        c(colors.red) print("[BOOM] Charge limit exceeded!") rc() return
-    end
-    if barrels > maxB then
-        c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
-    end
-
-    local vel = charges * CONFIG.charge_velocity / projectile.mass * CONFIG.velocity_scale
-    local cX,cY,cZ,tX,tY,tZ = getCoords()
-    fire(vel, cX,cY,cZ, tX,tY,tZ)
+local function chargesSpeed(charges, mass)
+    -- В CBC: initialSpeed = charges * 2 блока/тик, затем делится на mass
+    return (charges * 2) / (mass or 1.0)
 end
 
 -- ─────────────────────────────────────────
---  MODE 2: Auto-calculate charges
+--  РЕЖИМ 1: Ручные заряды
+-- ─────────────────────────────────────────
+local function modePowder()
+    local material   = menu("Материал:", CONFIG.materials)
+    if not material then return end
+    local projectile = menu("\nПроектиль:", CONFIG.projectiles)
+    if not projectile then return end
+
+    print("")
+    local charges = askNum("Пороховых зарядов (макс "..material.max_charges.."): ")
+    local maxB    = charges * material.barrel_per_charge
+    local barrels = askNum("Длина ствола (макс "..string.format("%.1f", maxB).."): ")
+
+    if charges > material.max_charges then
+        c(colors.red) print("[ВЗРЫВ] Превышен лимит зарядов!") rc() return
+    end
+    if barrels > maxB then
+        c(colors.red) print("[КЛИН] Снаряд застрянет в стволе!") rc() return
+    end
+
+    local speed = chargesSpeed(charges, projectile.mass)
+    local cX,cY,cZ,tX,tY,tZ = getCoords()
+    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, speed, barrels)
+    if not yaw then
+        c(colors.red) print("  [!] Цель недостижима!") rc() return
+    end
+    showAndAim(yaw, sol1, sol2, dist, speed)
+end
+
+-- ─────────────────────────────────────────
+--  РЕЖИМ 2: Авто-подбор зарядов
 -- ─────────────────────────────────────────
 local function modeAutoCharges()
-    local material   = menu("Material:", CONFIG.materials)
+    local material   = menu("Материал:", CONFIG.materials)
     if not material then return end
-    local projectile = menu("\nProjectile:", CONFIG.projectiles)
+    local projectile = menu("\nПроектиль:", CONFIG.projectiles)
     if not projectile then return end
 
     local cX,cY,cZ,tX,tY,tZ = getCoords()
 
-    local dist = math.sqrt((tX-cX)^2 + (tZ-cZ)^2)
-    local dY   = tY - cY
-    local g    = CONFIG.gravity
-    local maxUp = CONFIG.max_elevate
-
     print("")
-    c(colors.yellow) print("-- Charge options --") rc()
+    c(colors.yellow) print("-- Варианты зарядов --") rc()
 
-    local found_c, found_v
+    local found_c
     for try_c = 1, material.max_charges do
-        local try_v = try_c * CONFIG.charge_velocity / projectile.mass * CONFIG.velocity_scale
-        local disc  = try_v^4 - g*(g*dist^2 + 2*dY*try_v^2)
-        if disc >= 0 then
-            local root   = math.sqrt(disc)
-            local p_flat = math.deg(math.atan((try_v^2 - root) / (g*dist)))
-            local p_high = math.deg(math.atan((try_v^2 + root) / (g*dist)))
-            local ok_flat = p_flat <= maxUp
+        local try_v = chargesSpeed(try_c, projectile.mass)
+        local maxB  = try_c * material.barrel_per_charge
+        local yaw_t, sol1, sol2 = solveAngles(cX,cY,cZ, tX,tY,tZ, try_v, maxB)
+        if yaw_t and sol1 then
             local tag = ""
-            if not found_c then found_c = try_c; found_v = try_v; tag = " <--" end
-            c(ok_flat and colors.lime or colors.orange)
-            print("  "..try_c.."ch  v="..string.format("%3.0f",try_v)
-                .."  flat="..string.format("%5.1f",p_flat).."deg"
-                ..(ok_flat and "" or "*")
-                .."  high="..string.format("%5.1f",p_high).."deg"..tag)
+            if not found_c then found_c = try_c; tag = " <-- минимум" end
+            c(colors.lime)
+            io.write("  "..try_c.."зар  v="..string.format("%.2f",try_v).."б/тик")
+            io.write("  пол="..string.format("%5.1f",sol1.pitch).."°")
+            if sol2 then io.write("  кр="..string.format("%5.1f",sol2.pitch).."°") end
+            print(tag)
             rc()
         else
-            c(colors.red)
-            print("  "..try_c.."ch  out of range")
-            rc()
+            c(colors.red) print("  "..try_c.."зар  вне дальности") rc()
         end
     end
 
     if not found_c then
-        c(colors.red) print("\n  [!] Target unreachable!") rc()
-        return
+        c(colors.red) print("\n  [!] Цель недостижима!") rc() return
     end
 
     print("")
-    c(colors.lime) print("  Minimum: "..found_c.." charge(s)") rc()
-    local chosen_c = askNum("Use how many charges? [enter="..found_c.."]: ", found_c)
+    c(colors.lime) print("  Минимум: "..found_c.." зар.") rc()
+    local chosen_c = askNum("Сколько зарядов? [enter="..found_c.."]: ", found_c)
     if chosen_c < 1 or chosen_c > material.max_charges then
-        c(colors.red) print("  Invalid charge count.") rc() return
+        c(colors.red) print("  Неверное количество.") rc() return
     end
 
     local maxB  = chosen_c * material.barrel_per_charge
-    local barrels = askNum("Barrel length (max "..maxB.."): ")
+    local barrels = askNum("Длина ствола (макс "..string.format("%.1f",maxB).."): ")
     if barrels > maxB then
-        c(colors.red) print("[SQUIB] Shell will get stuck!") rc() return
+        c(colors.red) print("[КЛИН] Снаряд застрянет!") rc() return
     end
 
-    local vel = chosen_c * CONFIG.charge_velocity / projectile.mass * CONFIG.velocity_scale
-    fire(vel, cX,cY,cZ, tX,tY,tZ)
+    local speed = chargesSpeed(chosen_c, projectile.mass)
+    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, speed, barrels)
+    if not yaw then
+        c(colors.red) print("  [!] Цель недостижима!") rc() return
+    end
+    showAndAim(yaw, sol1, sol2, dist, speed)
 end
 
 -- ─────────────────────────────────────────
---  MODE 3: Cartridge
+--  РЕЖИМ 3: Картридж
 -- ─────────────────────────────────────────
 local function modeCartridge()
-    local cart = menu("Cartridge:", CONFIG.cartridges)
+    local cart = menu("Картридж:", CONFIG.cartridges)
     if not cart then return end
     local cX,cY,cZ,tX,tY,tZ = getCoords()
-    fire(cart.velocity, cX,cY,cZ, tX,tY,tZ)
+    -- Длина ствола для картриджа — нужна для точности вылета
+    local barrels = askNum("Длина ствола (блоков): ")
+    local yaw, sol1, sol2, dist = solveAngles(cX,cY,cZ, tX,tY,tZ, cart.speed, barrels)
+    if not yaw then
+        c(colors.red) print("  [!] Цель недостижима!") rc() return
+    end
+    showAndAim(yaw, sol1, sol2, dist, cart.speed)
 end
 
 -- ─────────────────────────────────────────
---  MODE 4: Calibrate
+--  РЕЖИМ 4: Справка по физике
 -- ─────────────────────────────────────────
-local function modeCalibrate()
+local function modeInfo()
     term.clear() term.setCursorPos(1,1)
-    c(colors.yellow) print("=== Velocity Calibration ===") rc()
+    c(colors.yellow) print("=== Физика CBC ===") rc()
     print("")
-    print("  1. Aim cannon at 45 deg pitch manually")
-    print("  2. Fire, note where shell lands")
-    print("  3. Enter data below")
+    print("  Каждый тик (1/20 сек):")
+    print("  Vx *= 0.99   (горизонтальное затухание)")
+    print("  Vy  = Vy * 0.99 - 0.05  (вертикальное + гравитация)")
     print("")
-
-    local cX,cY,cZ = getCannonPos()
-    if cX then
-        c(colors.lime) print("Cannon: X:"..cX.." Y:"..cY.." Z:"..cZ) rc()
-    else
-        c(colors.yellow) print("-- Cannon --") rc()
-        cX = askNum("X: ") cY = askNum("Y: ") cZ = askNum("Z: ")
-    end
-
-    c(colors.yellow) print("-- Landing spot --") rc()
-    local lX = askNum("X: ")
-    local lY = askNum("Y: ")
-    local lZ = askNum("Z: ")
-
-    local real_dist = math.sqrt((lX-cX)^2 + (lZ-cZ)^2)
-    local v_est     = math.sqrt(real_dist * CONFIG.gravity)
-
-    local charges   = askNum("Charges used: ")
-    local proj      = menu("Projectile used:", CONFIG.projectiles)
-    if not proj then return end
-
-    local v_formula = charges * CONFIG.charge_velocity / proj.mass
-    local scale     = v_est / v_formula
-
+    print("  Начальная скорость: charges * 2 / mass  [блоков/тик]")
+    print("  Напр.: 3 заряда, mass=1.0 → 6.0 б/тик = 120 б/с")
     print("")
-    c(colors.yellow) print("--- Result ---") rc()
-    print("  Real dist:    "..string.format("%.1f",real_dist).." blocks")
-    print("  Est velocity: "..string.format("%.1f",v_est).." blocks/s")
-    print("  Formula vel:  "..string.format("%.1f",v_formula).." blocks/s")
-    c(colors.lime)
-    print("  Suggested velocity_scale: "..string.format("%.3f",scale))
-    rc()
+    print("  Данный скрипт брутфорсит pitch от -30° до +60°,")
+    print("  сравнивая горизонтальное и вертикальное время полёта.")
     print("")
-    c(colors.yellow) io.write("  Apply? [Y/N]: ") rc()
-    if io.read():lower() == "y" then
-        CONFIG.velocity_scale = scale
-        c(colors.lime) print("  Applied: "..string.format("%.3f",scale)) rc()
-    end
+    c(colors.gray) io.write("Enter для выхода...") rc()
+    io.read()
 end
 
 -- ─────────────────────────────────────────
---  Main menu
+--  Главное меню
 -- ─────────────────────────────────────────
 local function main()
     term.clear() term.setCursorPos(1,1)
     c(colors.yellow) print("=== CBC Ballistic Terminal ===") rc()
     if cannon then
-        c(colors.lime)   print("[OK] Cannon Controller connected")
+        c(colors.lime)   print("[OK] Контроллер пушки подключён")
     else
-        c(colors.orange) print("[--] Cannon Controller not found")
+        c(colors.orange) print("[--] Контроллер пушки не найден")
     end
-    c(colors.gray) print("  velocity_scale = "..CONFIG.velocity_scale) rc()
+    c(colors.gray) print("  Физика: drag-модель (CBC тиковая симуляция)") rc()
     print("")
 
-    c(colors.yellow) print("Mode:") rc()
+    c(colors.yellow) print("Режим:") rc()
     c(colors.lightGray)
-    print("  [1] Fire  --  manual charges")
-    print("  [2] Fire  --  auto calculate charges")
-    print("  [3] Fire  --  cartridge")
-    print("  [4] Calibrate velocity")
+    print("  [1] Огонь  --  ручные заряды")
+    print("  [2] Огонь  --  авто подбор зарядов")
+    print("  [3] Огонь  --  картридж")
+    print("  [4] Справка по физике")
     rc()
-    local mode = ask("Choice: ")
+    local mode = ask("Выбор: ")
 
     print("")
     if     mode == "1" then modePowder()
     elseif mode == "2" then modeAutoCharges()
     elseif mode == "3" then modeCartridge()
-    elseif mode == "4" then modeCalibrate()
+    elseif mode == "4" then modeInfo()
     else
-        c(colors.red) print("Invalid choice.") rc()
+        c(colors.red) print("Неверный выбор.") rc()
     end
 
     print("")
-    c(colors.gray) io.write("Enter -- menu  |  Q -- quit: ") rc()
+    c(colors.gray) io.write("Enter -- меню  |  Q -- выход: ") rc()
     if io.read():lower() ~= "q" then main() end
 end
 

@@ -5,28 +5,85 @@ if not speaker then error("Speaker not found!") end
 
 local user = "Vegstor54"
 local repo = "music-cc"
-local folder = "TRACKS"
-local apiUrl = "https://api.github.com/repos/"..user.."/"..repo.."/contents/"..folder
+local apiBase = "https://api.github.com/repos/" .. user .. "/" .. repo .. "/contents/"
 
--- Переменная состояния повтора
 local isRepeatMode = false
+local currentFolder = nil
 
--- Очистка экрана и отрисовка интерфейса
-local function drawUI(currentTrack)
+local function httpGet(url)
+    local response = http.get(url)
+    if not response then return nil end
+    local data = textutils.unserializeJSON(response.readAll())
+    response.close()
+    return data
+end
+
+
+local function getFolders()
+    local data = httpGet(apiBase)
+    if not data then return nil end
+    local folders = {}
+    for _, item in ipairs(data) do
+        if item.type == "dir" then
+            table.insert(folders, item.name)
+        end
+    end
+    return folders
+end
+
+
+local function getPlaylist(folder)
+    local data = httpGet(apiBase .. folder)
+    if not data then return nil end
+    local tracks = {}
+    for _, file in ipairs(data) do
+        if file.type == "file" and file.name:lower():match("%.dfpwm$") then
+            table.insert(tracks, { name = file.name, url = file.download_url })
+        end
+    end
+    return tracks
+end
+
+
+local function drawFolderUI(folders, selected)
     term.clear()
     term.setCursorPos(1, 1)
-    print("Cloud Music Player")
-    print("------------------")
-    print("Now Playing:")
-    print("> " .. currentTrack)
+    term.setTextColor(colors.yellow)
+    print("=== Cloud Music Player ===")
+    term.setTextColor(colors.white)
+    print("Select a playlist:\n")
+
+    for i, name in ipairs(folders) do
+        if i == selected then
+            term.setTextColor(colors.black)
+            term.setBackgroundColor(colors.white)
+            print("  > " .. name)
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.white)
+        else
+            print("    " .. name)
+        end
+    end
+
+    print("\n[Up/Down] Navigate   [Enter] Open")
+end
+
+
+local function drawPlayerUI(trackName, folder)
+    term.clear()
+    term.setCursorPos(1, 1)
+    term.setTextColor(colors.yellow)
+    print("=== Cloud Music Player ===")
+    term.setTextColor(colors.white)
+    print("Playlist : " .. folder)
+    print("Track    : " .. trackName)
     print("\nControls:")
-    print("[S] Skip Track")
-    
-    -- Динамически меняем надпись R
-    term.write("[R] Repeat Mode: ")
+    print("  [S] Skip track")
+    print("  [B] Back to playlists")
+    term.write("  [R] Repeat: ")
     if isRepeatMode then
         term.setTextColor(colors.green)
-        print("ON ")
+        print("ON")
     else
         term.setTextColor(colors.red)
         print("OFF")
@@ -34,28 +91,39 @@ local function drawUI(currentTrack)
     term.setTextColor(colors.white)
 end
 
-local function getPlaylist()
-    print("\nUpdating playlist...")
-    local response = http.get(apiUrl)
-    if not response then return nil end
-    local data = textutils.unserializeJSON(response.readAll())
-    response.close()
-    return data
+
+local function selectFolder(folders)
+    local selected = 1
+    drawFolderUI(folders, selected)
+
+    while true do
+        local _, key = os.pullEvent("key")
+
+        if key == keys.up then
+            selected = math.max(1, selected - 1)
+            drawFolderUI(folders, selected)
+
+        elseif key == keys.down then
+            selected = math.min(#folders, selected + 1)
+            drawFolderUI(folders, selected)
+
+        elseif key == keys.enter then
+            return folders[selected]
+        end
+    end
 end
 
-local function playTrack(url, name)
-    -- Внутренний цикл повтора одной песни
+local function playTrack(url, name, folder)
     while true do
-        drawUI(name)
-        
+        drawPlayerUI(name, folder)
+
         local encodedUrl = url:gsub(" ", "%%20"):gsub("&", "%%26")
         local res = http.get(encodedUrl, nil, true)
-        if not res then return end
+        if not res then return "next" end
 
         local decoder = dfpwm.make_decoder()
-        local skipped = false
+        local action = "next" 
 
-        -- 1. Функция воспроизведения
         local function audioStream()
             while true do
                 local chunk = res.read(16384)
@@ -68,47 +136,90 @@ local function playTrack(url, name)
             res.close()
         end
 
-        -- 2. Функция управления (слушает клавиши)
         local function controlHandler()
             while true do
                 local _, key = os.pullEvent("key")
-                
+
                 if key == keys.s then
-                    skipped = true
-                    break -- Выходим из управления, что остановит parallel
-                
+                    action = "next"
+                    break
+
+                elseif key == keys.b then
+                    action = "back"
+                    break
+
                 elseif key == keys.r then
-                    isRepeatMode = not isRepeatMode -- Переключаем режим
-                    drawUI(name) -- Обновляем экран
+                    isRepeatMode = not isRepeatMode
+                    drawPlayerUI(name, folder)
                 end
             end
         end
 
-        -- Запускаем звук и управление параллельно
         parallel.waitForAny(audioStream, controlHandler)
 
-        -- ЛОГИКА ВЫХОДА ИЗ ЦИКЛА ТРЕКА:
-        -- Если нажали Skip (skipped == true) -> прерываем цикл повтора, идем к след. песне.
-        -- Если песня кончилась сама И режим повтора ВЫКЛ -> прерываем цикл, идем к след. песне.
-        -- Если песня кончилась сама И режим повтора ВКЛ -> цикл while true повторяется.
-        if skipped or not isRepeatMode then
+
+        if action == "back" then
+            return "back"
+        end
+
+       
+        if action == "next" then
+            if isRepeatMode and not (action == "next" and true) then
+      
+            end
+           
+      
             break
         end
+
+       
+        if not isRepeatMode then
+            break
+        end
+       
+    end
+
+    return "next"
+end
+
+
+local function playPlaylist(folder)
+    while true do
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("Loading playlist: " .. folder .. "...")
+
+        local tracks = getPlaylist(folder)
+        if not tracks or #tracks == 0 then
+            print("No .dfpwm tracks found in '" .. folder .. "'.")
+            sleep(3)
+            return true
+        end
+
+        for _, track in ipairs(tracks) do
+            local result = playTrack(track.url, track.name, folder)
+            if result == "back" then
+                return true 
+            end
+        end
+
+       
     end
 end
 
--- ГЛАВНЫЙ ЦИКЛ ПЛЕЙЛИСТА
+
 while true do
-    local fileList = getPlaylist()
-    
-    if fileList then
-        for _, file in ipairs(fileList) do
-            if file.type == "file" and file.name:lower():match("%.dfpwm$") then
-                playTrack(file.download_url, file.name)
-            end
-        end
-    else
-        print("Connection error. Retrying...")
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("Fetching playlists...")
+
+    local folders = getFolders()
+
+    if not folders or #folders == 0 then
+        print("No folders found in repository. Retrying in 5s...")
         sleep(5)
+    else
+        local chosen = selectFolder(folders)
+        playPlaylist(chosen)
     end
 end

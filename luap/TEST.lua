@@ -41,19 +41,38 @@ local function getFolders()
     return folders
 end
 
+-- НОВАЯ СИСТЕМА: Умное сопоставление аудио и текста
 local function getPlaylist(folder)
     local data = httpGet(apiBase .. folder)
     if not data then return nil end
+    
     local tracks = {}
+    local lrcs = {}
+    
+    -- Сначала собираем все файлы
     for _, file in ipairs(data) do
-        if file.type == "file" and file.name:lower():match("%.dfpwm$") then
-            table.insert(tracks, { name = file.name, url = file.download_url })
+        if file.type == "file" then
+            local lowerName = file.name:lower()
+            -- Удаляем всё после последней точки, чтобы получить чистое имя (без расширения)
+            local baseName = file.name:gsub("%.[^%.]+$", "")
+            
+            if lowerName:match("%.dfpwm$") then
+                table.insert(tracks, { name = file.name, url = file.download_url, baseName = baseName })
+            elseif lowerName:match("%.lrc$") then
+                lrcs[baseName:lower()] = file.download_url
+            end
         end
     end
+    
+    -- Связываем треки с их текстами по имени
+    for _, track in ipairs(tracks) do
+        track.lrcUrl = lrcs[track.baseName:lower()]
+    end
+    
     return tracks
 end
 
--- Парсер LRC файлов (Улучшенный, поддерживает разные форматы времени)
+-- Парсер времени
 local function parseLRC(lrcText)
     local lyrics = {}
     for line in lrcText:gmatch("[^\r\n]+") do
@@ -128,26 +147,31 @@ local function selectFolder(folders)
     end
 end
 
-local function playTrack(url, name, folder)
+local function playTrack(url, name, folder, lrcUrl)
     while true do
         local encodedUrl = url:gsub(" ", "%%20"):gsub("&", "%%26")
         local res = http.get(encodedUrl, nil, true)
         if not res then return "next" end
 
-        -- Пытаемся скачать LRC файл с текстом песни
-        local lrcUrl = encodedUrl:gsub("%.dfpwm$", ".lrc")
-        local lrcRes = http.get(lrcUrl)
         local lyrics = {}
         local statusMsg = ""
         
-        if lrcRes then
-            lyrics = parseLRC(lrcRes.readAll())
-            lrcRes.close()
-            if #lyrics == 0 then
-                statusMsg = "LRC downloaded, but time format is unreadable!"
+        -- Теперь мы точно знаем URL текста из API GitHub, если он есть
+        if lrcUrl then
+            local encodedLrcUrl = lrcUrl:gsub(" ", "%%20"):gsub("&", "%%26")
+            local lrcRes = http.get(encodedLrcUrl)
+            if lrcRes then
+                local lrcText = lrcRes.readAll()
+                lrcRes.close()
+                lyrics = parseLRC(lrcText)
+                if #lyrics == 0 then
+                    statusMsg = "Error: Found .lrc, but format inside is invalid!"
+                end
+            else
+                statusMsg = "Error: Failed to download .lrc file!"
             end
         else
-            statusMsg = "File not found (Check name or wait 5 mins for GitHub)"
+            statusMsg = "No .lrc file found next to this track!"
         end
 
         local decoder = dfpwm.make_decoder()
@@ -185,4 +209,103 @@ local function playTrack(url, name, folder)
 
         local function lyricsRenderer()
             local lastIndex = -1
-            local centerY = math.floor(h / 2) +
+            local centerY = math.floor(h / 2) + 2
+
+            -- Выводим конкретную ошибку красным цветом
+            if #lyrics == 0 then
+                term.clear()
+                drawPlayerUI(name, folder)
+                centerText(centerY, statusMsg, colors.red)
+                while true do sleep(1) end
+            end
+
+            while true do
+                local elapsed = os.epoch("utc") - startTime
+                local currentIndex = 0
+
+                -- Ищем текущую строку
+                for i = #lyrics, 1, -1 do
+                    if elapsed >= lyrics[i].time then
+                        currentIndex = i
+                        break
+                    end
+                end
+
+                if currentIndex ~= lastIndex then
+                    lastIndex = currentIndex
+                    term.clear()
+                    drawPlayerUI(name, folder)
+
+                    if currentIndex > 0 then
+                        -- Предыдущие строки (полупрозрачные/серые)
+                        if lyrics[currentIndex - 2] then centerText(centerY - 4, lyrics[currentIndex - 2].text, colors.gray) end
+                        if lyrics[currentIndex - 1] then centerText(centerY - 2, lyrics[currentIndex - 1].text, colors.lightGray) end
+                        
+                        -- Текущая строка (белая, по центру)
+                        centerText(centerY, lyrics[currentIndex].text, colors.white)
+                        
+                        -- Следующие строки
+                        if lyrics[currentIndex + 1] then centerText(centerY + 2, lyrics[currentIndex + 1].text, colors.lightGray) end
+                        if lyrics[currentIndex + 2] then centerText(centerY + 4, lyrics[currentIndex + 2].text, colors.gray) end
+                    else
+                        centerText(centerY, "...", colors.gray)
+                    end
+                end
+                
+                sleep(0.05) 
+            end
+        end
+
+        parallel.waitForAny(audioStream, controlHandler, lyricsRenderer)
+
+        if action == "back" then
+            return "back"
+        end
+
+        if action == "next" then
+            if not isRepeatMode then
+                break
+            end
+        end
+    end
+
+    return "next"
+end
+
+local function playPlaylist(folder)
+    while true do
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("Loading playlist: " .. folder .. "...")
+
+        local tracks = getPlaylist(folder)
+        if not tracks or #tracks == 0 then
+            print("No .dfpwm tracks found in '" .. folder .. "'.")
+            sleep(3)
+            return true
+        end
+
+        for _, track in ipairs(tracks) do
+            local result = playTrack(track.url, track.name, folder, track.lrcUrl)
+            if result == "back" then
+                return true 
+            end
+        end
+    end
+end
+
+while true do
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("Fetching playlists...")
+
+    local folders = getFolders()
+
+    if not folders or #folders == 0 then
+        print("No folders found in repository. Retrying in 5s...")
+        sleep(5)
+    else
+        local chosen = selectFolder(folders)
+        playPlaylist(chosen)
+    end
+end

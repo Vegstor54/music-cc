@@ -53,12 +53,10 @@ local function getPlaylist(folder)
     return tracks
 end
 
--- Парсер LRC файлов
--- Парсер LRC файлов (Улучшенный)
+-- Парсер LRC файлов (Улучшенный, поддерживает разные форматы времени)
 local function parseLRC(lrcText)
     local lyrics = {}
     for line in lrcText:gmatch("[^\r\n]+") do
-        -- Поддерживает [00:15.50], [00:15:50] и [00:15]
         local m, s, ms, text = line:match("%[(%d+):(%d+)[%.%:]*(%d*)%](.*)")
         if m and s then
             ms = tonumber(ms) or 0
@@ -140,15 +138,20 @@ local function playTrack(url, name, folder)
         local lrcUrl = encodedUrl:gsub("%.dfpwm$", ".lrc")
         local lrcRes = http.get(lrcUrl)
         local lyrics = {}
+        local statusMsg = ""
+        
         if lrcRes then
             lyrics = parseLRC(lrcRes.readAll())
             lrcRes.close()
+            if #lyrics == 0 then
+                statusMsg = "LRC downloaded, but time format is unreadable!"
+            end
+        else
+            statusMsg = "File not found (Check name or wait 5 mins for GitHub)"
         end
 
         local decoder = dfpwm.make_decoder()
         local action = "next" 
-        
-        -- Фиксируем время начала трека для синхронизации
         local startTime = os.epoch("utc")
 
         local function audioStream()
@@ -174,7 +177,6 @@ local function playTrack(url, name, folder)
                     break
                 elseif key == keys.r then
                     isRepeatMode = not isRepeatMode
-                    -- Принудительное обновление интерфейса
                     term.clear()
                     drawPlayerUI(name, folder)
                 end
@@ -183,106 +185,4 @@ local function playTrack(url, name, folder)
 
         local function lyricsRenderer()
             local lastIndex = -1
-            local centerY = math.floor(h / 2) + 2
-
-            -- Если текста нет, просто рисуем UI и ждем
-            if #lyrics == 0 then
-                term.clear()
-                drawPlayerUI(name, folder)
-                centerText(centerY, "No lyrics found (.lrc)", colors.lightGray)
-                while true do sleep(1) end
-            end
-
-            while true do
-                local elapsed = os.epoch("utc") - startTime
-                local currentIndex = 0
-
-                -- Ищем текущую строчку
-                for i = #lyrics, 1, -1 do
-                    if elapsed >= lyrics[i].time then
-                        currentIndex = i
-                        break
-                    end
-                end
-
-                -- Обновляем экран только если строчка поменялась (защита от мерцания)
-                if currentIndex ~= lastIndex then
-                    lastIndex = currentIndex
-                    term.clear()
-                    drawPlayerUI(name, folder)
-
-                    if currentIndex > 0 then
-                        -- Предыдущие строки (полупрозрачные/серые)
-                        if lyrics[currentIndex - 2] then centerText(centerY - 4, lyrics[currentIndex - 2].text, colors.gray) end
-                        if lyrics[currentIndex - 1] then centerText(centerY - 2, lyrics[currentIndex - 1].text, colors.lightGray) end
-                        
-                        -- Текущая строка (белая, по центру)
-                        centerText(centerY, lyrics[currentIndex].text, colors.white)
-                        
-                        -- Следующие строки
-                        if lyrics[currentIndex + 1] then centerText(centerY + 2, lyrics[currentIndex + 1].text, colors.lightGray) end
-                        if lyrics[currentIndex + 2] then centerText(centerY + 4, lyrics[currentIndex + 2].text, colors.gray) end
-                    else
-                        centerText(centerY, "...", colors.gray)
-                    end
-                end
-                
-                -- Небольшая пауза, чтобы не нагружать сервер
-                sleep(0.05) 
-            end
-        end
-
-        -- Запускаем аудио, контроль и отрисовку текста параллельно
-        parallel.waitForAny(audioStream, controlHandler, lyricsRenderer)
-
-        if action == "back" then
-            return "back"
-        end
-
-        if action == "next" then
-            if not isRepeatMode then
-                break
-            end
-        end
-    end
-
-    return "next"
-end
-
-local function playPlaylist(folder)
-    while true do
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("Loading playlist: " .. folder .. "...")
-
-        local tracks = getPlaylist(folder)
-        if not tracks or #tracks == 0 then
-            print("No .dfpwm tracks found in '" .. folder .. "'.")
-            sleep(3)
-            return true
-        end
-
-        for _, track in ipairs(tracks) do
-            local result = playTrack(track.url, track.name, folder)
-            if result == "back" then
-                return true 
-            end
-        end
-    end
-end
-
-while true do
-    term.clear()
-    term.setCursorPos(1, 1)
-    print("Fetching playlists...")
-
-    local folders = getFolders()
-
-    if not folders or #folders == 0 then
-        print("No folders found in repository. Retrying in 5s...")
-        sleep(5)
-    else
-        local chosen = selectFolder(folders)
-        playPlaylist(chosen)
-    end
-end
+            local centerY = math.floor(h / 2) +

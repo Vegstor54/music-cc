@@ -54,13 +54,15 @@ local function getPlaylist(folder)
 end
 
 -- Парсер LRC файлов
+-- Парсер LRC файлов (Улучшенный)
 local function parseLRC(lrcText)
     local lyrics = {}
     for line in lrcText:gmatch("[^\r\n]+") do
-        -- Ищем формат [mm:ss.xx] Текст
-        local m, s, ms, text = line:match("%[(%d+):(%d+)%.(%d+)%](.*)")
-        if m and s and ms then
-            local timeMs = (tonumber(m) * 60 * 1000) + (tonumber(s) * 1000) + (tonumber(ms) * 10)
+        -- Поддерживает [00:15.50], [00:15:50] и [00:15]
+        local m, s, ms, text = line:match("%[(%d+):(%d+)[%.%:]*(%d*)%](.*)")
+        if m and s then
+            ms = tonumber(ms) or 0
+            local timeMs = (tonumber(m) * 60 * 1000) + (tonumber(s) * 1000) + (ms * 10)
             table.insert(lyrics, {time = timeMs, text = text or ""})
         end
     end

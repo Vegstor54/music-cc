@@ -6,7 +6,7 @@ if #sides == 0 then
     return
 end
 
-print("--- Список устройств и их методов ---")
+print("--- list peripherals methods ---")
 
 for _, side in ipairs(sides) do
     -- Определяем тип устройства (например, "monitor", "chest", "drive")

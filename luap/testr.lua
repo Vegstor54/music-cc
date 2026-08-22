@@ -237,8 +237,8 @@ end
 local function drawFooter()
     local width, height = term.getSize()
 
-    local line1 = "UP/DN move  ENTER take  T all  R refresh"
-    local line2 = "S search  Q back->storage  O change output"
+    local line1 = "UP/DN move  ENTER take amount  T take stack"
+    local line2 = "R refresh  S search  Q dump output  O change"
 
     term.setCursorPos(1, height)
     term.setBackgroundColor(colors.lightGray)
@@ -363,7 +363,8 @@ local function takeSelectedItem()
     draw()
 end
 
-local function takeAllFromOutput()
+-- Q: dump everything currently sitting in the output back into storage
+local function dumpOutputToStorage()
     if not output or type(output.list) ~= "function" then
         return
     end
@@ -388,8 +389,46 @@ local function takeAllFromOutput()
     draw()
 end
 
-local function moveFromOutputToStorage()
-    takeAllFromOutput()
+-- T: take the FULL stack of the currently selected item, no amount prompt
+local function takeFullStackOfSelected()
+    if not output or type(output.pullItems) ~= "function" then
+        return
+    end
+
+    local cachedItem = items[selected]
+    if not cachedItem then
+        return
+    end
+
+    local side, slot, liveCount = findItemLocation(cachedItem.name)
+    if not side then
+        term.setCursorPos(1, 1)
+        term.clearLine()
+        write("Item disappeared from network")
+        sleep(1)
+        refreshItems()
+        draw()
+        return
+    end
+
+    local ok, result = pcall(function()
+        return output.pullItems(side, slot, liveCount)
+    end)
+
+    if not ok then
+        term.setCursorPos(1, 1)
+        term.clearLine()
+        write("Error: " .. tostring(result))
+        sleep(1.5)
+    elseif result == nil or result == 0 then
+        term.setCursorPos(1, 1)
+        term.clearLine()
+        write("Nothing moved (output full or network gap)")
+        sleep(2)
+    end
+
+    refreshItems()
+    draw()
 end
 
 local function searchItem()
@@ -452,9 +491,9 @@ while true do
         elseif key == keys.enter then
             takeSelectedItem()
         elseif key == keys.t then
-            takeAllFromOutput()
+            takeFullStackOfSelected()
         elseif key == keys.q then
-            moveFromOutputToStorage()
+            dumpOutputToStorage()
         elseif key == keys.r then
             refreshItems()
         elseif key == keys.s then

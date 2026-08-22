@@ -139,6 +139,7 @@ local function getItemsFromSide(side)
     for slot, item in pairs(list) do
         if item and item.name then
             table.insert(result, {
+                source = side,
                 side = side,
                 slot = slot,
                 name = item.name,
@@ -155,7 +156,7 @@ local function findItemLocation(itemName)
         local itemsInSide = getItemsFromSide(side)
         for _, item in ipairs(itemsInSide) do
             if item.name == itemName then
-                return item.side, item.slot, item.count
+                return item.source, item.slot, item.count
             end
         end
     end
@@ -169,11 +170,41 @@ local function findAllItemLocations(itemName)
         local itemsInSide = getItemsFromSide(side)
         for _, item in ipairs(itemsInSide) do
             if item.name == itemName then
-                table.insert(locations, {side = item.side, slot = item.slot, count = item.count})
+                table.insert(locations, {
+                    source = item.source,
+                    side = item.side,
+                    slot = item.slot,
+                    count = item.count,
+                })
             end
         end
     end
     return locations
+end
+
+local function pullFromSourceRef(sourceRef, slot, amount)
+    if not sourceRef or sourceRef == "" then
+        return 0
+    end
+
+    -- Some setups expose inventory peripherals by name, while others require a side.
+    -- Try the exact source reference first, then keep a compatibility fallback for side names.
+    local candidates = {sourceRef}
+    if sourceRef ~= "left" and sourceRef ~= "right" and sourceRef ~= "top" and sourceRef ~= "bottom" and
+       sourceRef ~= "front" and sourceRef ~= "back" then
+        table.insert(candidates, sourceRef:match("^(.-):") or sourceRef)
+    end
+
+    for _, candidate in ipairs(candidates) do
+        local ok, result = pcall(function()
+            return output.pullItems(candidate, slot, amount)
+        end)
+        if ok and result and result > 0 then
+            return result
+        end
+    end
+
+    return 0
 end
 
 -- pulls up to `amount` of an item, walking every slot it's spread across
@@ -189,11 +220,9 @@ local function pullItemAcrossSlots(itemName, amount)
         end
 
         local toTake = math.min(remaining, loc.count)
-        local ok, result = pcall(function()
-            return output.pullItems(loc.side, loc.slot, toTake)
-        end)
+        local result = pullFromSourceRef(loc.source or loc.side, loc.slot, toTake)
 
-        if ok and result then
+        if result > 0 then
             moved = moved + result
             remaining = remaining - result
         end

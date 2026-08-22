@@ -162,6 +162,46 @@ local function findItemLocation(itemName)
     return nil
 end
 
+-- finds EVERY slot across the whole network holding this item
+local function findAllItemLocations(itemName)
+    local locations = {}
+    for _, side in ipairs(getStorageSides()) do
+        local itemsInSide = getItemsFromSide(side)
+        for _, item in ipairs(itemsInSide) do
+            if item.name == itemName then
+                table.insert(locations, {side = item.side, slot = item.slot, count = item.count})
+            end
+        end
+    end
+    return locations
+end
+
+-- pulls up to `amount` of an item, walking every slot it's spread across
+-- returns how much actually got moved
+local function pullItemAcrossSlots(itemName, amount)
+    local locations = findAllItemLocations(itemName)
+    local remaining = amount
+    local moved = 0
+
+    for _, loc in ipairs(locations) do
+        if remaining <= 0 then
+            break
+        end
+
+        local toTake = math.min(remaining, loc.count)
+        local ok, result = pcall(function()
+            return output.pullItems(loc.side, loc.slot, toTake)
+        end)
+
+        if ok and result then
+            moved = moved + result
+            remaining = remaining - result
+        end
+    end
+
+    return moved
+end
+
 -- finds the FIRST available storage we can actually push items into
 local function findAnyStorageTarget()
     for _, side in ipairs(getStorageSides()) do
@@ -305,8 +345,14 @@ local function takeSelectedItem()
         return
     end
 
-    local side, slot, liveCount = findItemLocation(cachedItem.name)
-    if not side then
+    -- ask the network for the live total right before showing the prompt
+    local locations = findAllItemLocations(cachedItem.name)
+    local liveTotal = 0
+    for _, loc in ipairs(locations) do
+        liveTotal = liveTotal + loc.count
+    end
+
+    if liveTotal == 0 then
         term.setCursorPos(1, 1)
         term.clearLine()
         write("Item disappeared from network")
@@ -318,44 +364,24 @@ local function takeSelectedItem()
 
     term.setCursorPos(1, 1)
     term.clearLine()
-    write("Count (max " .. liveCount .. "): ")
+    write("Count (max " .. liveTotal .. "): ")
     local input = read()
-    local amount = tonumber(input) or liveCount
+    local amount = tonumber(input) or liveTotal
 
     if amount < 1 then amount = 1 end
-    if amount > liveCount then amount = liveCount end
+    if amount > liveTotal then amount = liveTotal end
 
-    local side2, slot2, liveCount2 = findItemLocation(cachedItem.name)
-    if not side2 then
-        term.setCursorPos(1, 1)
-        term.clearLine()
-        write("Item vanished while you typed the amount")
-        sleep(1)
-        refreshItems()
-        draw()
-        return
-    end
+    local moved = pullItemAcrossSlots(cachedItem.name, amount)
 
-    if amount > liveCount2 then amount = liveCount2 end
-
-    local ok, result = pcall(function()
-        return output.pullItems(side2, slot2, amount)
-    end)
-
-    if not ok then
-        term.setCursorPos(1, 1)
-        term.clearLine()
-        write("Error: " .. tostring(result))
-        sleep(1.5)
-    elseif result == nil or result == 0 then
+    if moved == 0 then
         term.setCursorPos(1, 1)
         term.clearLine()
         write("Nothing moved (output full or network gap)")
         sleep(2)
-    elseif result < amount then
+    elseif moved < amount then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Moved only " .. result .. " of " .. amount)
+        write("Moved only " .. moved .. " of " .. amount)
         sleep(1.5)
     end
 
@@ -389,7 +415,8 @@ local function dumpOutputToStorage()
     draw()
 end
 
--- T: take the FULL stack of the currently selected item, no amount prompt
+-- T: take the FULL grouped amount of the currently selected item
+-- (walks every slot across every storage this item is spread across)
 local function takeFullStackOfSelected()
     if not output or type(output.pullItems) ~= "function" then
         return
@@ -400,8 +427,13 @@ local function takeFullStackOfSelected()
         return
     end
 
-    local side, slot, liveCount = findItemLocation(cachedItem.name)
-    if not side then
+    local locations = findAllItemLocations(cachedItem.name)
+    local liveTotal = 0
+    for _, loc in ipairs(locations) do
+        liveTotal = liveTotal + loc.count
+    end
+
+    if liveTotal == 0 then
         term.setCursorPos(1, 1)
         term.clearLine()
         write("Item disappeared from network")
@@ -411,16 +443,9 @@ local function takeFullStackOfSelected()
         return
     end
 
-    local ok, result = pcall(function()
-        return output.pullItems(side, slot, liveCount)
-    end)
+    local moved = pullItemAcrossSlots(cachedItem.name, liveTotal)
 
-    if not ok then
-        term.setCursorPos(1, 1)
-        term.clearLine()
-        write("Error: " .. tostring(result))
-        sleep(1.5)
-    elseif result == nil or result == 0 then
+    if moved == 0 then
         term.setCursorPos(1, 1)
         term.clearLine()
         write("Nothing moved (output full or network gap)")

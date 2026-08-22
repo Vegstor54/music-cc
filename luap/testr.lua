@@ -217,7 +217,8 @@ end
 -- ITEM LIST + SCROLLING + SELECTION
 -- ==========================================================
 
-local items = {}
+local rawItems = {}   -- last scan of the network, unsorted, refreshed only on real actions
+local items = {}      -- what's actually drawn (sorted view of rawItems, no network calls)
 local selected = 1
 local scrollOffset = 1
 local sortMode = "name" -- "name" (= by type/id), "mod", "count"
@@ -248,11 +249,44 @@ local function applySort(list)
     end
 end
 
-local function refreshItems()
-    if items == nil then items = {} end
-    if selected == nil then selected = 1 end
-    if scrollOffset == nil then scrollOffset = 1 end
+-- keeps selection/scroll within bounds. Pure local math, no network calls.
+local function clampSelectionAndScroll()
+    if #items == 0 then
+        selected = 1
+        scrollOffset = 1
+        return
+    end
 
+    if selected > #items then selected = #items end
+    if selected < 1 then selected = 1 end
+
+    local _, height = term.getSize()
+    local visibleRows = math.max(1, height - 2)
+
+    if selected < scrollOffset then
+        scrollOffset = selected
+    elseif selected > scrollOffset + visibleRows - 1 then
+        scrollOffset = selected - visibleRows + 1
+    end
+
+    if scrollOffset < 1 then scrollOffset = 1 end
+end
+
+-- rebuilds the sorted display list from the already-scanned rawItems.
+-- no network calls - safe to run on every keypress (sort change, etc.)
+local function rebuildDisplayList()
+    local copy = {}
+    for _, item in ipairs(rawItems) do
+        table.insert(copy, item)
+    end
+    applySort(copy)
+    items = copy
+    clampSelectionAndScroll()
+end
+
+-- the EXPENSIVE part: actually scans every peripheral in the network.
+-- only call this on real actions (take/dump/manual refresh), never on plain navigation.
+local function refreshFromNetwork()
     local list = {}
     local storageSides = getStorageSides()
 
@@ -278,29 +312,8 @@ local function refreshItems()
         table.insert(merged, item)
     end
 
-    applySort(merged)
-
-    items = merged
-
-    if #items == 0 then
-        selected = 1
-        scrollOffset = 1
-        return
-    end
-
-    if selected > #items then selected = #items end
-    if selected < 1 then selected = 1 end
-
-    local _, height = term.getSize()
-    local visibleRows = math.max(1, height - 2)
-
-    if selected < scrollOffset then
-        scrollOffset = selected
-    elseif selected > scrollOffset + visibleRows - 1 then
-        scrollOffset = selected - visibleRows + 1
-    end
-
-    if scrollOffset < 1 then scrollOffset = 1 end
+    rawItems = merged
+    rebuildDisplayList()
 end
 
 local function drawFooter()
@@ -324,7 +337,6 @@ local function drawFooter()
 end
 
 function draw()
-    refreshItems()
     term.clear()
 
     local width, height = term.getSize()
@@ -386,7 +398,7 @@ local function takeSelectedItem()
         term.clearLine()
         write("Item disappeared from network")
         sleep(1)
-        refreshItems()
+        refreshFromNetwork()
         draw()
         return
     end
@@ -414,7 +426,7 @@ local function takeSelectedItem()
         sleep(1.5)
     end
 
-    refreshItems()
+    refreshFromNetwork()
     draw()
 end
 
@@ -440,7 +452,7 @@ local function dumpOutputToStorage()
             end)
         end
     end
-    refreshItems()
+    refreshFromNetwork()
     draw()
 end
 
@@ -467,7 +479,7 @@ local function takeFullStackOfSelected()
         term.clearLine()
         write("Item disappeared from network")
         sleep(1)
-        refreshItems()
+        refreshFromNetwork()
         draw()
         return
     end
@@ -481,7 +493,7 @@ local function takeFullStackOfSelected()
         sleep(2)
     end
 
-    refreshItems()
+    refreshFromNetwork()
     draw()
 end
 
@@ -527,7 +539,7 @@ local function cycleSortMode()
     else
         sortMode = "name"
     end
-    refreshItems()
+    rebuildDisplayList() -- just re-sorts cached data, no network scan
     draw()
 end
 
@@ -537,7 +549,7 @@ local function changeOutputPeripheral()
     saveConfig(config)
     outputSide = config.outputSide
     output = peripheral.wrap(outputSide)
-    refreshItems()
+    refreshFromNetwork()
     draw()
 end
 
@@ -545,6 +557,7 @@ end
 -- MAIN LOOP
 -- ==========================================================
 
+refreshFromNetwork() -- first scan happens once here, not on every draw
 draw()
 
 while true do
@@ -552,8 +565,10 @@ while true do
     if event == "key" then
         if key == keys.down and selected < #items then
             selected = selected + 1
+            clampSelectionAndScroll()
         elseif key == keys.up and selected > 1 then
             selected = selected - 1
+            clampSelectionAndScroll()
         elseif key == keys.enter then
             takeSelectedItem()
         elseif key == keys.t then
@@ -561,7 +576,7 @@ while true do
         elseif key == keys.q then
             dumpOutputToStorage()
         elseif key == keys.r then
-            refreshItems()
+            refreshFromNetwork()
         elseif key == keys.s then
             searchItem()
         elseif key == keys.o then

@@ -220,6 +220,33 @@ end
 local items = {}
 local selected = 1
 local scrollOffset = 1
+local sortMode = "name" -- "name" (= by type/id), "mod", "count"
+
+-- extracts the mod id from an item name like "minecraft:iron_ingot" -> "minecraft"
+local function getModId(itemName)
+    return itemName:match("^(.-):") or itemName
+end
+
+local function applySort(list)
+    if sortMode == "mod" then
+        table.sort(list, function(a, b)
+            local modA, modB = getModId(a.name), getModId(b.name)
+            if modA == modB then
+                return a.name < b.name
+            end
+            return modA < modB
+        end)
+    elseif sortMode == "count" then
+        table.sort(list, function(a, b)
+            if a.count == b.count then
+                return a.name < b.name
+            end
+            return a.count > b.count -- biggest stacks first
+        end)
+    else -- "name": sorts by full id, which also groups by item type
+        table.sort(list, function(a, b) return a.name < b.name end)
+    end
+end
 
 local function refreshItems()
     if items == nil then items = {} end
@@ -251,6 +278,8 @@ local function refreshItems()
         table.insert(merged, item)
     end
 
+    applySort(merged)
+
     items = merged
 
     if #items == 0 then
@@ -278,7 +307,7 @@ local function drawFooter()
     local width, height = term.getSize()
 
     local line1 = "UP/DN move  ENTER take amount  T take stack"
-    local line2 = "R refresh  S search  Q dump output  O change"
+    local line2 = "R refresh  S search  Q dump  O change  M sort:" .. sortMode
 
     term.setCursorPos(1, height)
     term.setBackgroundColor(colors.lightGray)
@@ -490,6 +519,18 @@ local function searchItem()
     draw()
 end
 
+local function cycleSortMode()
+    if sortMode == "name" then
+        sortMode = "mod"
+    elseif sortMode == "mod" then
+        sortMode = "count"
+    else
+        sortMode = "name"
+    end
+    refreshItems()
+    draw()
+end
+
 local function changeOutputPeripheral()
     local chosen = selectOutputPeripheral()
     config = {outputSide = chosen}
@@ -525,6 +566,8 @@ while true do
             searchItem()
         elseif key == keys.o then
             changeOutputPeripheral()
+        elseif key == keys.m then
+            cycleSortMode()
         end
 
         draw()

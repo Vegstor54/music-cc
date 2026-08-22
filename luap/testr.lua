@@ -1,5 +1,5 @@
 -- ==========================================================
--- КОНФИГ: какая периферия является "обменником" (output)
+-- CONFIG: which peripheral is the "output" exchanger
 -- ==========================================================
 local CONFIG_FILE = "network_config.txt"
 
@@ -38,15 +38,15 @@ local function selectOutputPeripheral()
     if #candidates == 0 then
         term.clear()
         term.setCursorPos(1, 1)
-        print("Не найдено ни одной инвентарной периферии в сети")
-        print("Проверь кабели/модемы и перезапусти программу")
-        while true do end -- останавливаемся, дальше идти некуда
+        print("No inventory peripherals found in network")
+        print("Check cables/modems and restart the program")
+        while true do end -- stop here, nothing else to do
     end
 
     local function draw()
         term.clear()
         term.setCursorPos(1, 1)
-        print("Выбери обменник (Enter для подтверждения):")
+        print("Select output (Enter to confirm):")
         for i, name in ipairs(candidates) do
             term.setCursorPos(1, i + 1)
             if i == selected then
@@ -88,11 +88,11 @@ local outputSide = config.outputSide
 local output = peripheral.wrap(outputSide)
 
 if not output then
-    -- обменник из конфига пропал из сети (переименовался/отключился) - спросим заново
+    -- output from config vanished from network (renamed/disconnected) - ask again
     term.clear()
     term.setCursorPos(1, 1)
-    print("Сохранённый обменник '" .. outputSide .. "' не найден в сети")
-    print("Нажми любую клавишу, чтобы выбрать заново")
+    print("Saved output '" .. outputSide .. "' not found in network")
+    print("Press any key to select again")
     os.pullEvent("key")
     local chosen = selectOutputPeripheral()
     config = {outputSide = chosen}
@@ -102,7 +102,7 @@ if not output then
 end
 
 -- ==========================================================
--- РАБОТА С СЕТЬЮ ХРАНЕНИЯ
+-- STORAGE NETWORK LOGIC
 -- ==========================================================
 
 local function getStorageSides()
@@ -162,7 +162,7 @@ local function findItemLocation(itemName)
     return nil
 end
 
--- находит ПЕРВОЕ доступное хранилище, куда реально получилось что-то положить
+-- finds the FIRST available storage we can actually push items into
 local function findAnyStorageTarget()
     for _, side in ipairs(getStorageSides()) do
         local ok, periph = pcall(function() return peripheral.wrap(side) end)
@@ -174,7 +174,7 @@ local function findAnyStorageTarget()
 end
 
 -- ==========================================================
--- СПИСОК ПРЕДМЕТОВ + ПРОКРУТКА + ВЫБОР
+-- ITEM LIST + SCROLLING + SELECTION
 -- ==========================================================
 
 local items = {}
@@ -292,7 +292,7 @@ function draw()
 end
 
 -- ==========================================================
--- ДЕЙСТВИЯ
+-- ACTIONS
 -- ==========================================================
 
 local function takeSelectedItem()
@@ -309,7 +309,7 @@ local function takeSelectedItem()
     if not side then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Предмет пропал из сети")
+        write("Item disappeared from network")
         sleep(1)
         refreshItems()
         draw()
@@ -329,7 +329,7 @@ local function takeSelectedItem()
     if not side2 then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Предмет исчез пока ты вводил число")
+        write("Item vanished while you typed the amount")
         sleep(1)
         refreshItems()
         draw()
@@ -345,17 +345,17 @@ local function takeSelectedItem()
     if not ok then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Ошибка: " .. tostring(result))
+        write("Error: " .. tostring(result))
         sleep(1.5)
     elseif result == nil or result == 0 then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Не перемещено (полон обменник или разрыв в сети)")
+        write("Nothing moved (output full or network gap)")
         sleep(2)
     elseif result < amount then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Перемещено только " .. result .. " из " .. amount)
+        write("Moved only " .. result .. " of " .. amount)
         sleep(1.5)
     end
 
@@ -372,7 +372,7 @@ local function takeAllFromOutput()
     if not target then
         term.setCursorPos(1, 1)
         term.clearLine()
-        write("Не найдено доступное хранилище")
+        write("No available storage found")
         sleep(1.5)
         return
     end
@@ -437,7 +437,7 @@ local function changeOutputPeripheral()
 end
 
 -- ==========================================================
--- ГЛАВНЫЙ ЦИКЛ
+-- MAIN LOOP
 -- ==========================================================
 
 draw()

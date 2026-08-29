@@ -1,7 +1,7 @@
 local sensor = peripheral.wrap("front")
-local TARGET_ID = "1c3d906a-8ee7-4d6c-a850-a40bc091b24a" -- id мишени
-
-local MAX_ANGLE = math.rad(45) -- подбери под реальный максимум отклонения сопла
+local TARGET_ID = "1c3d906a-8ee7-4d6c-a850-a40bc091b24a"
+local ENGINE_SIDE = "back" -- замени на реальную сторону двигателя
+local MAX_ANGLE = math.rad(45)
 
 local function angleToSignal(angle)
     local clamped = math.max(-MAX_ANGLE, math.min(MAX_ANGLE, angle))
@@ -29,6 +29,19 @@ local function setThrusterVector(yaw, pitch)
     end
 end
 
+-- ждём пуска
+print("Нажми Enter для пуска...")
+while true do
+    local event, key = os.pullEvent("key")
+    if key == keys.enter then
+        break
+    end
+end
+
+redstone.setAnalogOutput(ENGINE_SIDE, 10) -- запускаем двигатель
+print("Пуск! Наведение активно.")
+
+-- основной цикл наведения
 while true do
     local res = sensor.scan(true)
     local target = nil
@@ -44,11 +57,6 @@ while true do
         local yaw = math.atan2(target.x, target.z)
         local pitch = math.atan2(target.y, math.sqrt(target.x^2 + target.z^2))
         setThrusterVector(yaw, pitch)
-    else
-        redstone.setAnalogOutput("top", 0)
-        redstone.setAnalogOutput("bottom", 0)
-        redstone.setAnalogOutput("left", 0)
-        redstone.setAnalogOutput("right", 0)
     end
 
     sleep(0.05)

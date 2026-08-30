@@ -1,39 +1,27 @@
--- ===================================================
--- AX-99 GUIDED MISSILE — Guidance Computer
--- ===================================================
-
 -- === НАСТРОЙКИ ===
-local ENGINE_SIDE = "back"       -- сторона, куда подключён двигатель
-local ENGINE_POWER_FAR = 15      -- полная тяга на маршевом участке
-local ENGINE_POWER_NEAR = 5      -- сниженная тяга у цели, для точного доворота
-local NEAR_DISTANCE = 15         -- с какой дистанции включать снижение тяги
-local MAX_ANGLE = math.rad(120)  -- угол, при котором сигнал трастера = 15 (максимум)
-local SENSOR_FOV = 45            -- угол обзора сенсора
-local SCAN_DELAY = 0.02          -- пауза между сканами
+local ENGINE_SIDE = "back"
+local ENGINE_POWER = 10
+local MAX_ANGLE = math.rad(60)   -- теперь это макс. КОМАНДА доворота, не сырой угол на цель
+local SENSOR_FOV = 45
+local SCAN_DELAY = 0.02
+local N = 4  -- коэффициент навигации (обычно 3-5 у настоящих ракет)
 
--- === ПОДКЛЮЧЕНИЕ ПЕРИФЕРИИ ===
 local sensor = peripheral.find("optical_sensor")
-if not sensor then
-    error("optical_sensor not found! Check connection.")
-end
+if not sensor then error("optical_sensor not found!") end
 sensor.setFov(SENSOR_FOV)
 
 local log = fs.open("flight_log.txt", "w")
 
--- === ФУНКЦИИ ===
-
--- Угол (радианы) -> сигнал редстоуна 0-15
 local function angleToSignal(angle)
     local clamped = math.max(-MAX_ANGLE, math.min(MAX_ANGLE, angle))
     return math.floor((math.abs(clamped) / MAX_ANGLE) * 15)
 end
 
--- Подать сигналы на трастер по yaw/pitch
-local function setThrusterVector(yaw, pitch)
-    local yawSignal = angleToSignal(yaw)
-    local pitchSignal = angleToSignal(pitch)
+local function setThrusterVector(yawCmd, pitchCmd)
+    local yawSignal = angleToSignal(yawCmd)
+    local pitchSignal = angleToSignal(pitchCmd)
 
-    if yaw > 0 then
+    if yawCmd > 0 then
         redstone.setAnalogOutput("right", yawSignal)
         redstone.setAnalogOutput("left", 0)
     else
@@ -41,7 +29,7 @@ local function setThrusterVector(yaw, pitch)
         redstone.setAnalogOutput("right", 0)
     end
 
-    if pitch > 0 then
+    if pitchCmd > 0 then
         redstone.setAnalogOutput("top", pitchSignal)
         redstone.setAnalogOutput("bottom", 0)
     else
@@ -52,7 +40,6 @@ local function setThrusterVector(yaw, pitch)
     return yawSignal, pitchSignal
 end
 
--- Найти ближайшую цель из результатов скана
 local function findNearestTarget(detections)
     local nearest, minDist = nil, math.huge
     for _, d in ipairs(detections) do
@@ -64,43 +51,49 @@ local function findNearestTarget(detections)
     return nearest
 end
 
--- === ОЖИДАНИЕ ПУСКА ===
 print("Press Enter to launch...")
 while true do
     local event, key = os.pullEvent("key")
     if key == keys.enter then break end
 end
 
-redstone.setAnalogOutput(ENGINE_SIDE, ENGINE_POWER_FAR)
-print("Launched! Guidance active.")
+redstone.setAnalogOutput(ENGINE_SIDE, ENGINE_POWER)
+print("Launched!")
 
--- === ОСНОВНОЙ ЦИКЛ НАВЕДЕНИЯ ===
 local lastTick = nil
+local prevYaw, prevPitch = nil, nil
 
 while true do
     local res = sensor.scan(true)
 
-    -- реагируем только на новые данные сенсора
     if res.lastScanTick ~= lastTick then
         lastTick = res.lastScanTick
-
         local target = findNearestTarget(res.detections)
 
         if target then
             local yaw = math.atan2(target.x, target.z)
             local pitch = math.atan2(target.y, math.sqrt(target.x^2 + target.z^2))
 
-            local yawSig, pitchSig = setThrusterVector(yaw, pitch)
+            local yawCmd, pitchCmd = yaw, pitch -- по умолчанию для первого кадра
 
-            -- гасим тягу вблизи цели для точного доворота
-            local power = (target.distance < NEAR_DISTANCE) and ENGINE_POWER_NEAR or ENGINE_POWER_FAR
-            redstone.setAnalogOutput(ENGINE_SIDE, power)
+            if prevYaw then
+                local yawRate = yaw - prevYaw
+                local pitchRate = pitch - prevPitch
+                -- команда пропорциональна скорости изменения пеленга, плюс небольшая доводка по самому углу
+                yawCmd = N * yawRate + yaw * 0.3
+                pitchCmd = N * pitchRate + pitch * 0.3
+            end
+
+            local yawSig, pitchSig = setThrusterVector(yawCmd, pitchCmd)
 
             log.writeLine(string.format(
-                "tick=%d yaw=%.1f(sig=%d) pitch=%.1f(sig=%d) dist=%.1f power=%d",
-                res.lastScanTick, math.deg(yaw), yawSig, math.deg(pitch), pitchSig, target.distance, power
+                "tick=%d yaw=%.1f rate=%.2f cmd=%.1f(sig=%d) | pitch=%.1f cmd=%.1f(sig=%d) dist=%.1f",
+                res.lastScanTick, math.deg(yaw), prevYaw and math.deg(yaw-prevYaw) or 0, math.deg(yawCmd), yawSig,
+                math.deg(pitch), math.deg(pitchCmd), pitchSig, target.distance
             ))
             log.flush()
+
+            prevYaw, prevPitch = yaw, pitch
         end
     end
 

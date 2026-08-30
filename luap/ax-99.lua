@@ -1,17 +1,17 @@
 -- === НАСТРОЙКИ ===
-local TARGET_ID = "1c3d906a-8ee7-4d6c-a850-a40bc091b24a" -- id мишени, замени при необходимости
-local ENGINE_SIDE = "back"      -- сторона двигателя, замени на реальную
-local ENGINE_POWER = 15         -- полная тяга, как выяснили опытным путём
-local MAX_ANGLE = math.rad(45)  -- максимальный угол отклонения сопла, подбери под свой трастер
-local SENSOR_FOV = 45           -- широкий угол обзора, чтобы не терять цель
+local ENGINE_SIDE = "back"
+local ENGINE_POWER = 15
+local MAX_ANGLE = math.rad(45)
+local SENSOR_FOV = 45
 
 -- === ПОДКЛЮЧЕНИЕ ПЕРИФЕРИИ ===
 local sensor = peripheral.find("optical_sensor")
 if not sensor then
-    error("optical_sensor не найден! Проверь подключение.")
+    error("optical_sensor not found!")
 end
 
 sensor.setFov(SENSOR_FOV)
+print("FOV set to: " .. sensor.getFov())
 
 -- === ФУНКЦИИ УПРАВЛЕНИЯ ===
 local function angleToSignal(angle)
@@ -41,35 +41,36 @@ local function setThrusterVector(yaw, pitch)
 end
 
 -- === ОЖИДАНИЕ ПУСКА ===
-print("Нажми Enter для пуска...")
+print("Press Enter to launch...")
 while true do
     local event, key = os.pullEvent("key")
     if key == keys.enter then break end
 end
 
 redstone.setAnalogOutput(ENGINE_SIDE, ENGINE_POWER)
-print("Пуск! Наведение активно.")
+print("Launched! Guidance active.")
 
--- === ОСНОВНОЙ ЦИКЛ НАВЕДЕНИЯ ===
+-- === ОСНОВНОЙ ЦИКЛ НАВЕДЕНИЯ (берём ближайшую цель, без привязки к ID) ===
 while true do
     local res = sensor.scan(true)
-    local target = nil
 
+    local target = nil
+    local minDist = math.huge
     for _, d in ipairs(res.detections) do
-        if d.id == TARGET_ID then
+        if d.distance < minDist then
+            minDist = d.distance
             target = d
-            break
         end
     end
 
     if target then
         local yaw = math.atan2(target.x, target.z)
         local pitch = math.atan2(target.y, math.sqrt(target.x^2 + target.z^2))
-        print(string.format("dist=%.1f yaw=%.1f pitch=%.1f", target.distance, math.deg(yaw), math.deg(pitch)))
+        print(string.format("id=%s dist=%.1f yaw=%.1f pitch=%.1f", target.id, target.distance, math.deg(yaw), math.deg(pitch)))
         setThrusterVector(yaw, pitch)
     else
-        print("Цель не видна")
+        print("No target, count=" .. res.count)
     end
 
-    sleep(0.05)
+    sleep(0.1)
 end

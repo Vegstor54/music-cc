@@ -36,7 +36,7 @@ while true do
     if key == keys.enter then break end
 end
 
-redstone.setAnalogOutput(ENGINE_SIDE, 10)
+redstone.setAnalogOutput(ENGINE_SIDE, 15)
 print("Пуск! Наведение активно.")
 
 while true do

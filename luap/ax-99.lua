@@ -4,16 +4,14 @@ local ENGINE_POWER = 15
 local MAX_ANGLE = math.rad(45)
 local SENSOR_FOV = 45
 
--- === ПОДКЛЮЧЕНИЕ ПЕРИФЕРИИ ===
+-- === ПОДКЛЮЧЕНИЕ ===
 local sensor = peripheral.find("optical_sensor")
-if not sensor then
-    error("optical_sensor not found!")
-end
-
+if not sensor then error("optical_sensor not found!") end
 sensor.setFov(SENSOR_FOV)
-print("FOV set to: " .. sensor.getFov())
 
--- === ФУНКЦИИ УПРАВЛЕНИЯ ===
+local log = fs.open("flight_log.txt", "w")
+
+-- === ФУНКЦИИ ===
 local function angleToSignal(angle)
     local clamped = math.max(-MAX_ANGLE, math.min(MAX_ANGLE, angle))
     return math.floor((math.abs(clamped) / MAX_ANGLE) * 15)
@@ -38,9 +36,11 @@ local function setThrusterVector(yaw, pitch)
         redstone.setAnalogOutput("bottom", pitchSignal)
         redstone.setAnalogOutput("top", 0)
     end
+
+    return yawSignal, pitchSignal
 end
 
--- === ОЖИДАНИЕ ПУСКА ===
+-- === ПУСК ===
 print("Press Enter to launch...")
 while true do
     local event, key = os.pullEvent("key")
@@ -48,29 +48,35 @@ while true do
 end
 
 redstone.setAnalogOutput(ENGINE_SIDE, ENGINE_POWER)
-print("Launched! Guidance active.")
+print("Launched!")
 
--- === ОСНОВНОЙ ЦИКЛ НАВЕДЕНИЯ (берём ближайшую цель, без привязки к ID) ===
+-- === ЦИКЛ С ПРОВЕРКОЙ АКТУАЛЬНОСТИ СКАНА ===
+local lastTick = nil
+
 while true do
     local res = sensor.scan(true)
 
-    local target = nil
-    local minDist = math.huge
-    for _, d in ipairs(res.detections) do
-        if d.distance < minDist then
-            minDist = d.distance
-            target = d
+    if res.lastScanTick ~= lastTick then
+        lastTick = res.lastScanTick
+
+        local target = nil
+        local minDist = math.huge
+        for _, d in ipairs(res.detections) do
+            if d.distance < minDist then
+                minDist = d.distance
+                target = d
+            end
+        end
+
+        if target then
+            local yaw = math.atan2(target.x, target.z)
+            local pitch = math.atan2(target.y, math.sqrt(target.x^2 + target.z^2))
+            local yawSig, pitchSig = setThrusterVector(yaw, pitch)
+            log.writeLine(string.format("tick=%d yaw=%.1f(sig=%d) pitch=%.1f(sig=%d) dist=%.1f",
+                res.lastScanTick, math.deg(yaw), yawSig, math.deg(pitch), pitchSig, target.distance))
+            log.flush()
         end
     end
 
-    if target then
-        local yaw = math.atan2(target.x, target.z)
-        local pitch = math.atan2(target.y, math.sqrt(target.x^2 + target.z^2))
-        print(string.format("id=%s dist=%.1f yaw=%.1f pitch=%.1f", target.id, target.distance, math.deg(yaw), math.deg(pitch)))
-        setThrusterVector(yaw, pitch)
-    else
-        print("No target, count=" .. res.count)
-    end
-
-    sleep(0.1)
+    sleep(0.02)
 end
